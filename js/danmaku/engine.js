@@ -11,10 +11,14 @@ function makeBullet(x, y, vx, vy, opts = {}) {
     x, y, vx, vy,
     r: opts.r || 4,
     color: opts.color || '#ff5555',
+    coreColor: opts.coreColor || null,
+    shape: opts.shape || 'circle', // circle | star | petal | cross | diamond
     type: opts.type || 'normal', // normal | homing | curve | laser
     life: opts.life !== undefined ? opts.life : 600, // frames
     turn: opts.turn || 0, // homing turn rate
     curve: opts.curve || 0, // curve acceleration
+    rot: opts.rot || 0, // current rotation (rad)
+    rotSpeed: opts.rotSpeed || 0, // rotation per frame
     grazed: false,
     active: true,
   };
@@ -33,6 +37,10 @@ class DanmakuEngine {
     this.player = null;
     this.boss = null;
     this.bullets = [];
+    this.playerShots = [];
+    this.phaseHp = 0;
+    this.phaseMaxHp = 0;
+    this.shotPattern = null;
     this.phases = [];
     this.phaseIndex = 0;
     this.phaseTime = 0;
@@ -65,7 +73,7 @@ class DanmakuEngine {
     if (down && k === 'x') this.player.focus = !this.player.focus;
   }
 
-  start(phases, boss, playerStats) {
+  start(phases, boss, playerStats, playerPieceType) {
     this.phases = phases;
     this.boss = {
       x: this.W / 2,
@@ -85,6 +93,9 @@ class DanmakuEngine {
       alive: true,
     };
     this.bullets = [];
+    this.playerShots = [];
+    this.shotPattern =
+      CONFIG.SHOT_PATTERNS[playerPieceType] || CONFIG.SHOT_PATTERNS.p;
     this.phaseIndex = 0;
     this.phaseTime = 0;
     this.time = 0;
@@ -94,7 +105,7 @@ class DanmakuEngine {
     this.graze = 0;
     this.bombGauge = 0;
     this.running = true;
-    this._announcePhase(0);
+    this._startPhase(0);
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
     this._last = performance.now();
@@ -102,15 +113,20 @@ class DanmakuEngine {
     this._loop();
   }
 
+  // Begin a phase: set its HP gauge and announce it.
+  _startPhase(i) {
+    const phase = this.phases[i];
+    if (!phase) return;
+    this.phaseMaxHp = phase.hp || 0;
+    this.phaseHp = this.phaseMaxHp;
+    this.onPhase(phase);
+  }
+
   stop() {
     this.running = false;
     if (this._raf) cancelAnimationFrame(this._raf);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
-  }
-
-  _announcePhase(i) {
-    if (i < this.phases.length) this.onPhase(this.phases[i]);
   }
 
   _loop() {
@@ -139,6 +155,8 @@ class DanmakuEngine {
       phase: this.phaseIndex,
       phaseCount: this.phases.length,
       phaseName: this.phases[this.phaseIndex] ? this.phases[this.phaseIndex].name : '',
+      phaseHp: this.phaseHp,
+      phaseMaxHp: this.phaseMaxHp,
     };
   }
 
@@ -152,17 +170,22 @@ class DanmakuEngine {
     this._updateBoss();
     this._emitPattern();
     this._updateBullets();
+    this._updateShots();
     this._checkCollisions();
 
-    // Phase progression.
+    // Phase progression: a spell card ends when its time elapses (timeout) or
+    // its HP gauge is broken (depleted by player shots). Either way we advance.
     const phase = this.phases[this.phaseIndex];
-    if (phase && this.phaseTime >= phase.duration) {
+    if (phase && (this.phaseTime >= phase.duration || this.phaseHp <= 0)) {
       this.phaseIndex++;
       this.phaseTime = 0;
       if (this.phaseIndex >= this.phases.length) {
         this._end('win');
       } else {
-        this._announcePhase(this.phaseIndex);
+        // Clear the field for a clean transition into the next card.
+        for (const b of this.bullets) b.active = false;
+        this.bullets = [];
+        this._startPhase(this.phaseIndex);
       }
     }
   }
@@ -292,6 +315,7 @@ class DanmakuEngine {
     if (this.bullets.length > 1200) return; // cap
     const b = makeBullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, {
       r: em.r, color: em.color,
+      coreColor: em.coreColor, shape: em.shape, rotSpeed: em.rotSpeed,
       ...extra,
     });
     this.bullets.push(b);
@@ -320,6 +344,7 @@ class DanmakuEngine {
         b.vx = Math.cos(newCur) * spd;
         b.vy = Math.sin(newCur) * spd;
       }
+      if (b.rotSpeed) b.rot += b.rotSpeed;
       b.x += b.vx;
       b.y += b.vy;
       b.life--;
@@ -333,10 +358,90 @@ class DanmakuEngine {
     }
   }
 
+  // Player auto-fire: fire the piece's signature pattern upward, move the
+  // shots (homing/curve/rotation), and damage the current spell card on boss
+  // contact. Breaking the card's HP gauge ends it early.
+  _updateShots() {
+    if (this.result) return;
+    const p = this.player;
+    const b = this.boss;
+    const S = this.shotPattern;
+    if (!S) return;
+
+    // Fire (auto).
+    if (p.alive && this.phaseMaxHp > 0 && this.frame % S.interval === 0) {
+      const baseAngle = -Math.PI / 2; // straight up
+      for (let i = 0; i < S.count; i++) {
+        const a = S.count > 1
+          ? baseAngle + (i / (S.count - 1) - 0.5) * S.spread
+          : baseAngle;
+        this.playerShots.push({
+          x: p.x,
+          y: p.y - 10,
+          vx: Math.cos(a) * S.speed,
+          vy: Math.sin(a) * S.speed,
+          r: S.r,
+          color: S.color,
+          coreColor: '#ffffff',
+          shape: S.shape || 'circle',
+          type: S.type || 'normal',
+          turn: S.turn || 0,
+          curve: S.curve || 0,
+          rot: 0,
+          rotSpeed: S.rotSpeed || 0,
+          active: true,
+        });
+      }
+    }
+
+    // Move + collide with the boss.
+    for (const s of this.playerShots) {
+      if (!s.active) continue;
+      if (s.type === 'homing') {
+        const desired = Math.atan2(b.y - s.y, b.x - s.x);
+        let cur = Math.atan2(s.vy, s.vx);
+        let diff = desired - cur;
+        while (diff > Math.PI) diff -= TAU;
+        while (diff < -Math.PI) diff += TAU;
+        const turn = Math.max(-s.turn, Math.min(s.turn, diff));
+        const spd = Math.hypot(s.vx, s.vy);
+        cur += turn;
+        s.vx = Math.cos(cur) * spd;
+        s.vy = Math.sin(cur) * spd;
+      }
+      if (s.type === 'curve') {
+        const cur = Math.atan2(s.vy, s.vx);
+        const spd = Math.hypot(s.vx, s.vy);
+        const newCur = cur + s.curve;
+        s.vx = Math.cos(newCur) * spd;
+        s.vy = Math.sin(newCur) * spd;
+      }
+      if (s.rotSpeed) s.rot += s.rotSpeed;
+      s.x += s.vx;
+      s.y += s.vy;
+      if (s.y < -20 || s.x < -20 || s.x > this.W + 20 || s.y > this.H + 20) {
+        s.active = false;
+        continue;
+      }
+      if (Math.hypot(s.x - b.x, s.y - b.y) < CONFIG.BOSS_HITBOX + s.r) {
+        s.active = false;
+        this.phaseHp -= S.damage;
+        if (this.phaseHp < 0) this.phaseHp = 0;
+        this.score += 10;
+      }
+    }
+    if (this.playerShots.some(s => !s.active)) {
+      this.playerShots = this.playerShots.filter(s => s.active);
+    }
+  }
+
   _checkCollisions() {
     const p = this.player;
     if (!p.alive) return;
-    const hb = p.focus ? p.focusHitbox : p.hitbox;
+    // Hitbox RADIUS. The config value is a diameter and the rendered dot uses
+    // hb/2, so collision must use the same radius or the hitbox is 2x the size
+    // of what's visible.
+    const hb = (p.focus ? p.focusHitbox : p.hitbox) / 2;
     for (const b of this.bullets) {
       if (!b.active) continue;
       const dx = b.x - p.x;
@@ -375,6 +480,8 @@ class DanmakuEngine {
   bomb() {
     const p = this.player;
     if (!p.alive || p.bombs <= 0) return;
+    const phase = this.phases[this.phaseIndex];
+    if (phase && phase.noBombs) return; // bombs disabled this phase (e.g. Kaguya Last Spell)
     if (this.bombGauge < 1 && p.bombs > 1) return; // need full gauge for extra bombs
     p.bombs--;
     this.bombGauge = 0;
@@ -414,16 +521,99 @@ class DanmakuEngine {
     // Bullets.
     for (const b of this.bullets) {
       if (!b.active) continue;
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, TAU);
-      ctx.fillStyle = b.color;
-      ctx.fill();
+      this._drawBullet(ctx, b);
+    }
+
+    // Player shots.
+    for (const s of this.playerShots) {
+      if (!s.active) continue;
+      this._drawBullet(ctx, s);
     }
 
     // Player.
     this._drawPlayer(ctx);
 
     ctx.restore();
+  }
+
+  // Render a bullet with a soft glow + bright core, and an optional shape.
+  _drawBullet(ctx, b) {
+    const r = b.r;
+    const color = b.color || '#ff5555';
+    const shape = b.shape || 'circle';
+    // Fast path for plain circles (no save/restore/rotate).
+    if (shape === 'circle' && !b.rot) {
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r * 1.9, 0, TAU);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = b.coreColor || '#ffffff';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r * 0.7, 0, TAU);
+      ctx.fill();
+      return;
+    }
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    if (b.rot) ctx.rotate(b.rot);
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.9, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = b.coreColor || '#ffffff';
+    switch (shape) {
+      case 'star': this._pathStar(ctx, r); break;
+      case 'petal': this._pathPetal(ctx, r); break;
+      case 'cross': this._pathCross(ctx, r); break;
+      case 'diamond': this._pathDiamond(ctx, r); break;
+      case 'rice': this._pathRice(ctx, r); break;
+      default: ctx.beginPath(); ctx.arc(0, 0, r * 0.7, 0, TAU);
+    }
+    ctx.fill();
+    ctx.restore();
+  }
+
+  _pathStar(ctx, r) {
+    const n = 4, outer = r * 1.15, inner = r * 0.45;
+    ctx.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const rad = i % 2 === 0 ? outer : inner;
+      const a = (i / (n * 2)) * TAU - Math.PI / 2;
+      const x = Math.cos(a) * rad, y = Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  _pathPetal(ctx, r) {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.5, r * 1.25, 0, 0, TAU);
+  }
+
+  _pathCross(ctx, r) {
+    const t = r * 0.42;
+    ctx.beginPath();
+    ctx.rect(-t, -r * 1.1, t * 2, r * 2.2);
+    ctx.rect(-r * 1.1, -t, r * 2.2, t * 2);
+  }
+
+  _pathDiamond(ctx, r) {
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 1.25);
+    ctx.lineTo(r * 0.8, 0);
+    ctx.lineTo(0, r * 1.25);
+    ctx.lineTo(-r * 0.8, 0);
+    ctx.closePath();
+  }
+
+  _pathRice(ctx, r) {
+    // Elongated grain shape (Touhou-style rice bullet).
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.35, r * 1.1, 0, 0, TAU);
   }
 
   _drawBackground(ctx) {
