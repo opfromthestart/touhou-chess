@@ -11,6 +11,11 @@
 
 const TAU_LOCAL = Math.PI * 2;
 
+// In Node.js, make CONFIG available (it's a global in the browser).
+if (typeof CONFIG === 'undefined' && typeof module !== 'undefined' && module.exports) {
+  global.CONFIG = require('../config.js').CONFIG;
+}
+
 // Apply Lunatic scaling to a phase's emits.
 function scalePhase(phase, diff) {
   const d = CONFIG.DIFFICULTY[diff];
