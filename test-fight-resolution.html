@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Fight Resolution Test</title>
+<link rel="stylesheet" href="css/style.css"></head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <h1>Touhou Chess</h1>
+    <div id="status"><span id="turn-indicator"></span><span id="game-over-banner"></span></div>
+    <div id="controls">
+      <button id="btn-new-game"></button>
+      <button id="btn-undo"></button>
+      <button id="btn-how-to"></button>
+      <button id="btn-export-log"></button>
+      <label class="ai-strength-label" for="ai-strength">AI</label>
+      <select id="ai-strength">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+      </select>
+      <button id="btn-sound">🔊 Sound</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="captured-tray-black" class="captured-tray"></div>
+    <div id="board-wrap"><div id="board"></div>
+      <div id="promotion-picker" class="hidden"><div class="promo-title"></div><div class="promo-choices"></div></div>
+    </div>
+    <div id="captured-tray-white" class="captured-tray"></div>
+  </main>
+  <div id="log-panel"><h2>Log</h2><ul id="move-log"></ul></div>
+</div>
+<div id="how-to-modal" class="modal hidden"><div class="modal-content"><h2>How</h2><button id="btn-close-how-to"></button></div></div>
+<div id="test-result" style="position:fixed;top:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre;max-width:60vw"></div>
+
+<script src="js/config.js"></script>
+<script src="js/art/characters.js"></script>
+<script src="js/chess/board.js"></script>
+<script src="js/chess/ai.js"></script>
+<script src="js/audio/sfx.js"></script>
+<script src="js/danmaku/engine.js"></script>
+<script src="js/danmaku/bosses.js"></script>
+<script src="js/ui/board-ui.js"></script>
+<script src="js/ui/fight-ui.js"></script>
+<script src="js/debug/log.js"></script>
+<script src="js/debug/replay.js"></script>
+<script src="js/main.js"></script>
+<script>
+// End-to-end test of capture-fight resolution through the REAL game code
+// (Board + BoardUI clicks + FightUI + the main.js state machine), driven via
+// the window.__TC debug hook.
+//
+// Scenario 1: white captures a black piece, WINS the fight -> the black piece
+//   is removed, the white piece survives, the game continues.
+// Scenario 2: white captures a black piece, LOSES the fight -> the WHITE
+//   capturing piece is removed, the black piece stays, the turn passes to
+//   black, and the game continues (this was the reported soft-lock).
+//
+// The capture target is a black KNIGHT on d6: a pawn on e5 can capture it
+// diagonally, but neither side has any OTHER capture available afterwards, so
+// the AI (opening book) always makes a quiet move and never triggers an
+// unexpected second fight.
+(function () {
+  const out = [];
+  const el = document.getElementById('test-result');
+  function log(m) { out.push(m); el.textContent = out.join('\n'); }
+  function fail(m) { log('FAIL: ' + m); el.style.background = 'red'; throw new Error(m); }
+  function ok(m) { log('PASS: ' + m); }
+  function sq(r, c) { return document.querySelector(`#board .square[data-row="${r}"][data-col="${c}"]`); }
+  function click(r, c) { sq(r, c).dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+  function modalOpen() { return !document.getElementById('fight-modal').classList.contains('hidden'); }
+  const TC = window.__TC;
+
+  // White pawn e5 (row 4, col 4) + black knight d6 (row 3, col 3).
+  function placeTarget(b) {
+    b.grid[4][4] = { type: 'p', color: 'white', character: 'cirno', hasMoved: true };
+    b.grid[3][3] = { type: 'n', color: 'black', character: 'nitori', hasMoved: true };
+    b.turn = 'white';
+    b.gameOver = false;
+  }
+
+  function scenario2() {
+    try {
+      const b = TC.board;
+      b.reset();
+      placeTarget(b);
+      TC.ui.clearLastMove();
+      TC.ui.render(b);
+      click(4, 4);
+      click(3, 3);
+      if (!modalOpen()) fail('scenario 2: fight modal did not open');
+      ok('scenario 2: capture opened the boss-fight modal');
+      // Force a loss: one life left, one hit.
+      TC.fight.engine.player.lives = 1;
+      TC.fight.engine._hitPlayer();
+      setTimeout(() => {
+        try {
+          if (document.getElementById('fight-result').classList.contains('hidden'))
+            fail('scenario 2: result overlay not shown after loss');
+          ok('scenario 2: loss result shown');
+          // Record history length NOW (synchronously, before the AI's 60ms
+          // timer can fire) so we can prove the turn passed to black: the AI
+          // must add exactly one move afterwards.
+          const histBefore = b.moveHistory.length;
+          document.getElementById('btn-fight-continue').click();
+          setTimeout(() => {
+            try {
+              if (b.grid[4][4]) fail('scenario 2: capturing pawn should be removed after a lost fight');
+              ok('scenario 2: lost fight removed the PLAYER\'s capturing piece');
+              if (!b.grid[3][3] || b.grid[3][3].type !== 'n') fail('scenario 2: AI piece should remain after a lost fight');
+              ok('scenario 2: AI piece survived (target not captured)');
+              setTimeout(() => {
+                try {
+                  // The turn passed to black: the AI must have answered with
+                  // exactly one move (the failed capture itself is not in
+                  // moveHistory, so history grew from histBefore by 1).
+                  if (b.moveHistory.length !== histBefore + 1)
+                    fail('scenario 2: expected exactly one AI reply move (history ' +
+                      b.moveHistory.length + ', before ' + histBefore + ')');
+                  ok('scenario 2: turn passed to black (AI played a reply move)');
+                  const turn = document.getElementById('turn-indicator').textContent;
+                  if (!/Your move/.test(turn))
+                    fail('scenario 2: game did not continue after a lost capture fight (turn: ' + turn + ')');
+                  ok('scenario 2: game continued after a LOST capture fight (back to player turn)');
+                  log('ALL FIGHT RESOLUTION TESTS PASSED');
+                  el.style.background = 'lime';
+                } catch (e) { fail(e.message); }
+              }, 900);
+            } catch (e) { fail(e.message); }
+          }, 80);
+        } catch (e) { fail(e.message); }
+      }, 80);
+    } catch (e) { fail(e.message); }
+  }
+
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        const b = TC.board;
+        placeTarget(b);
+        TC.ui.render(b);
+        click(4, 4); // select the white pawn
+        click(3, 3); // capture the knight -> Normal fight vs Nitori
+        if (!modalOpen()) fail('capture did not open the boss-fight modal');
+        ok('capture opened the boss-fight modal');
+        // The ship must be drawn as the capturing protagonist (Cirno).
+        if (TC.fight.engine.playerChar !== 'cirno')
+          fail('playerChar not passed to the engine (got ' + TC.fight.engine.playerChar + ')');
+        ok('ship sprite is the capturing protagonist (cirno)');
+        // Force a win and continue.
+        TC.fight.engine._end('win');
+        setTimeout(() => {
+          try {
+            if (document.getElementById('fight-result').classList.contains('hidden'))
+              fail('win result overlay not shown');
+            ok('win result shown');
+            document.getElementById('btn-fight-continue').click();
+            setTimeout(() => {
+              try {
+                // Capture succeeded: the knight is gone and the white pawn
+                // landed on d6 (row 3, col 3).
+                if (!b.grid[3][3] || b.grid[3][3].color !== 'white' || b.grid[3][3].type !== 'p')
+                  fail('won fight: expected the white pawn on d6 (got ' + JSON.stringify(b.grid[3][3]) + ')');
+                ok('won fight: AI piece removed, capturing pawn landed on d6');
+                if (b.grid[4][4]) fail('capturing pawn should have left e5');
+                ok('won fight: e5 vacated');
+                // Black's turn now; the AI (opening book, no captures available)
+                // should make a quiet move and hand the turn back.
+                setTimeout(() => {
+                  try {
+                    const turn = document.getElementById('turn-indicator').textContent;
+                    if (!/Your move/.test(turn))
+                      fail('game did not continue after a won capture fight (turn: ' + turn + ')');
+                    ok('game continued after a WON capture fight (back to player turn)');
+                    scenario2();
+                  } catch (e) { fail(e.message); }
+                }, 900);
+              } catch (e) { fail(e.message); }
+            }, 80);
+          } catch (e) { fail(e.message); }
+        }, 80);
+      } catch (e) { fail(e.message); }
+    }, 300);
+  });
+})();
+</script>
+</body>
+</html>

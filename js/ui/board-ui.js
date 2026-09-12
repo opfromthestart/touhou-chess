@@ -5,6 +5,10 @@ const GLYPHS = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
 };
 
+const PIECE_NAMES = {
+  k: 'King', q: 'Queen', r: 'Rook', b: 'Bishop', n: 'Knight', p: 'Pawn',
+};
+
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
 class BoardUI {
@@ -17,7 +21,29 @@ class BoardUI {
     this.lastMove = null; // { from, to }
     this.promotionPending = null; // { move, choices }
     this.squares = []; // 2D array of square elements
+    this._spriteCache = {}; // "charId:size" -> source canvas (drawn once)
     this._build();
+  }
+
+  // A cached offscreen canvas with the character drawn once at `size`.
+  _charSource(id, size) {
+    const key = id + ':' + size;
+    if (!this._spriteCache[key]) {
+      this._spriteCache[key] = makeCharacterCanvas(id, size);
+    }
+    return this._spriteCache[key];
+  }
+
+  // A fresh copy of the character sprite (a canvas node can only live in one
+  // place in the DOM, so each placement gets its own clone).
+  _charSprite(id, size) {
+    const src = this._charSource(id, size);
+    const cv = document.createElement('canvas');
+    cv.width = size;
+    cv.height = size;
+    cv.className = 'piece-art';
+    cv.getContext('2d').drawImage(src, 0, 0);
+    return cv;
   }
 
   _build() {
@@ -126,10 +152,11 @@ class BoardUI {
     for (const t of choices) {
       const btn = document.createElement('div');
       btn.className = 'promo-choice';
-      btn.innerHTML = `<span class="glyph">${GLYPHS[t]}</span>`;
+      btn.title = PIECE_NAMES[t] + ' — ' + CONFIG.CHARACTERS[roster[t].you[0]];
+      btn.appendChild(this._charSprite(roster[t].you[0], 64));
       const label = document.createElement('span');
       label.className = 'char-label';
-      label.textContent = CONFIG.CHARACTERS[roster[t].you[0]];
+      label.textContent = CONFIG.CHARACTERS[roster[t].you[0]].split(' ')[0];
       btn.appendChild(label);
       btn.addEventListener('click', () => {
         picker.classList.add('hidden');
@@ -161,14 +188,17 @@ class BoardUI {
         if (piece) {
           const el = document.createElement('div');
           el.className = 'piece ' + piece.color;
-          const glyph = document.createElement('span');
-          glyph.className = 'glyph';
-          glyph.textContent = GLYPHS[piece.type];
-          el.appendChild(glyph);
-          const label = document.createElement('span');
-          label.className = 'char-label';
-          label.textContent = CONFIG.CHARACTERS[piece.character].split(' ')[0];
-          el.appendChild(label);
+          el.title = CONFIG.CHARACTERS[piece.character] + ' — ' + PIECE_NAMES[piece.type];
+          // Tinted backdrop reads "which side" at a glance (warm = protagonists,
+          // dark = youkai bosses). The hand-drawn bust is the real identity.
+          const backdrop = document.createElement('div');
+          backdrop.className = 'piece-backdrop';
+          el.appendChild(backdrop);
+          el.appendChild(this._charSprite(piece.character, 64));
+          const badge = document.createElement('span');
+          badge.className = 'type-badge';
+          badge.textContent = GLYPHS[piece.type];
+          el.appendChild(badge);
           sq.appendChild(el);
         }
       }
@@ -191,10 +221,9 @@ class BoardUI {
     blackTray.innerHTML = '';
     for (const { piece } of captured) {
       const el = document.createElement('span');
-      el.className = 'piece ' + piece.color;
-      el.style.width = '26px';
-      el.style.height = '26px';
-      el.innerHTML = `<span class="glyph" style="font-size:18px">${GLYPHS[piece.type]}</span>`;
+      el.className = 'tray-piece ' + piece.color;
+      el.title = CONFIG.CHARACTERS[piece.character] + ' — ' + PIECE_NAMES[piece.type];
+      el.appendChild(this._charSprite(piece.character, 32));
       // Pieces captured BY white are shown in the white tray.
       if (piece.color === 'black') whiteTray.appendChild(el);
       else blackTray.appendChild(el);

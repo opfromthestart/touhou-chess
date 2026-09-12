@@ -5,6 +5,12 @@
 
 const TAU = Math.PI * 2;
 
+// Play a sound effect if the SFX module is loaded (it no-ops when disabled or
+// unavailable — e.g. in Node tests).
+function sfxPlay(name) {
+  if (typeof SFX !== 'undefined' && SFX) SFX.play(name);
+}
+
 // Bullet pool.
 function makeBullet(x, y, vx, vy, opts = {}) {
   return {
@@ -73,13 +79,15 @@ class DanmakuEngine {
     if (down && k === 'x') this.player.focus = !this.player.focus;
   }
 
-  start(phases, boss, playerStats, playerPieceType) {
+  start(phases, boss, playerStats, playerPieceType, playerChar) {
     this.phases = phases;
     this.boss = {
       x: this.W / 2,
       y: 90,
       ...boss,
     };
+    // The protagonist fighting (drives the player ship sprite).
+    this.playerChar = playerChar || null;
     this.player = {
       x: this.W / 2,
       y: this.H - 60,
@@ -119,6 +127,7 @@ class DanmakuEngine {
     if (!phase) return;
     this.phaseMaxHp = phase.hp || 0;
     this.phaseHp = this.phaseMaxHp;
+    sfxPlay('spell');
     this.onPhase(phase);
   }
 
@@ -372,6 +381,7 @@ class DanmakuEngine {
 
     // Fire (auto).
     if (p.alive && this.phaseMaxHp > 0 && this.frame % S.interval === 0) {
+      sfxPlay('fire');
       const baseAngle = -Math.PI / 2; // straight up
       for (let i = 0; i < S.count; i++) {
         const a = S.count > 1
@@ -455,6 +465,7 @@ class DanmakuEngine {
         this.graze++;
         this.score += 100;
         this.bombGauge = Math.min(1, this.bombGauge + 0.02);
+        sfxPlay('graze');
       }
       // Hit.
       if (p.invuln <= 0 && dist < hb + b.r) {
@@ -469,6 +480,7 @@ class DanmakuEngine {
     p.lives--;
     p.invuln = 90; // 1.5s invulnerability
     this.shake = 12;
+    sfxPlay('hit');
     // Clear nearby bullets on hit (a small mercy).
     for (const b of this.bullets) {
       if (Math.hypot(b.x - p.x, b.y - p.y) < 60) b.active = false;
@@ -485,6 +497,7 @@ class DanmakuEngine {
     const phase = this.phases[this.phaseIndex];
     if (phase && phase.noBombs) return; // bombs disabled this phase (e.g. Kaguya Last Spell)
     if (this.bombGauge < 1 && p.bombs > 1) return; // need full gauge for extra bombs
+    sfxPlay('bomb');
     p.bombs--;
     this.bombGauge = 0;
     // Bomb clears all bullets and gives brief invulnerability.
@@ -498,6 +511,7 @@ class DanmakuEngine {
     if (this.result) return;
     this.result = result;
     this.running = false;
+    sfxPlay(result === 'win' ? 'win' : 'lose');
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     this.onEnd(result);
@@ -629,21 +643,30 @@ class DanmakuEngine {
 
   _drawBoss(ctx) {
     const b = this.boss;
-    // Placeholder boss: a glowing orb with the boss's color (art comes in M6).
     const pulse = 1 + Math.sin(this.time * 3) * 0.08;
     ctx.save();
     ctx.translate(b.x, b.y);
-    const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 40 * pulse);
+    // Aura behind the boss.
+    const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 55 * pulse);
     grad.addColorStop(0, b.color || '#ffffff');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.5;
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(0, 0, 40 * pulse, 0, TAU);
+    ctx.arc(0, 0, 55 * pulse, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = b.color || '#ffffff';
-    ctx.beginPath();
-    ctx.arc(0, 0, 18 * pulse, 0, TAU);
-    ctx.fill();
+    ctx.globalAlpha = 1;
+    // Boss sprite (the same character art used on the board). Falls back to
+    // a colored orb if the sprite is missing.
+    const bob = Math.sin(this.time * 2) * 3;
+    if (b.charId && typeof drawCharacter === 'function' && drawCharacter(ctx, b.charId, -55, -55 + bob, 1.1)) {
+      // drawn
+    } else {
+      ctx.fillStyle = b.color || '#ffffff';
+      ctx.beginPath();
+      ctx.arc(0, 0, 18 * pulse, 0, TAU);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -654,16 +677,22 @@ class DanmakuEngine {
     if (p.invuln > 0 && Math.floor(this.frame / 4) % 2 === 0) return;
     ctx.save();
     ctx.translate(p.x, p.y);
-    // Ship (triangle) in the player's color.
-    ctx.fillStyle = this.playerColor || '#ff5577';
-    ctx.beginPath();
-    ctx.moveTo(0, -12);
-    ctx.lineTo(9, 10);
-    ctx.lineTo(0, 5);
-    ctx.lineTo(-9, 10);
-    ctx.closePath();
-    ctx.fill();
-    // Hitbox (red dot) — visible, Touhou-style.
+    // Player ship: the protagonist's character sprite (same art as the
+    // board piece). Falls back to a triangle if the sprite is missing.
+    const ok = this.playerChar && typeof drawCharacter === 'function'
+      ? drawCharacter(ctx, this.playerChar, -26, -26, 0.52)
+      : false;
+    if (!ok) {
+      ctx.fillStyle = this.playerColor || '#ff5577';
+      ctx.beginPath();
+      ctx.moveTo(0, -12);
+      ctx.lineTo(9, 10);
+      ctx.lineTo(0, 5);
+      ctx.lineTo(-9, 10);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Hitbox (red dot) — visible, Touhou-style; yellow when focused.
     const hb = p.focus ? p.focusHitbox : p.hitbox;
     ctx.fillStyle = p.focus ? '#ffff00' : '#ff0000';
     ctx.beginPath();

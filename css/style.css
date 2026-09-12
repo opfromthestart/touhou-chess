@@ -89,6 +89,23 @@ button {
 button:hover { background: #3a3153; }
 button:active { transform: translateY(1px); }
 
+/* AI-strength selector, styled to match the control buttons. */
+.ai-strength-label {
+  align-self: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+#ai-strength {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid #4a3f66;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+#ai-strength:hover { background: #3a3153; }
+
 #main {
   display: flex;
   flex-direction: column;
@@ -120,10 +137,10 @@ button:active { transform: translateY(1px); }
   grid-template-rows: repeat(8, 1fr);
   width: min(92vw, 560px);
   aspect-ratio: 1 / 1;
-  border: 4px solid #3a2f4a;
-  border-radius: 6px;
+  border: 5px solid #2a2138;
+  border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.4), 0 10px 34px rgba(0, 0, 0, 0.55);
 }
 
 .square {
@@ -165,36 +182,66 @@ button:active { transform: translateY(1px); }
   pointer-events: none;
 }
 
-/* Pieces */
+/* Pieces — hand-drawn character busts on a side-tinted backdrop. */
 .piece {
   position: relative;
-  width: 82%;
-  height: 82%;
+  width: 100%;
+  height: 100%;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  font-weight: 700;
   pointer-events: none;
+}
+.piece-backdrop {
+  position: absolute;
+  width: 84%;
+  height: 84%;
+  border-radius: 50%;
+}
+.piece.white .piece-backdrop {
+  background: radial-gradient(circle at 38% 32%, #fffaf0, #ecd6a6);
+  box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.75), 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.piece.black .piece-backdrop {
+  background: radial-gradient(circle at 38% 32%, #403a5c, #191530);
+  box-shadow: 0 0 0 2px rgba(140, 120, 200, 0.7), 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+.piece-art {
+  position: relative;
+  z-index: 1;
+  width: 88%;
+  height: 88%;
+}
+.type-badge {
+  position: absolute;
+  right: 7%;
+  bottom: 4%;
+  z-index: 2;
+  font-size: clamp(9px, 1.8vw, 13px);
   line-height: 1;
+  font-weight: 800;
 }
-.piece .glyph { font-size: clamp(20px, 6vw, 40px); }
-.piece .char-label {
-  font-size: clamp(8px, 1.6vw, 11px);
-  letter-spacing: 0.5px;
-  margin-top: 1px;
+.piece.white .type-badge { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85); }
+.piece.black .type-badge { color: #d8d0ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95); }
+
+/* Captured trays */
+.tray-piece {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.piece.white {
-  color: #222;
-  background: radial-gradient(circle at 35% 30%, #fff, #cfcfcf);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), inset 0 0 0 2px #fff;
+.tray-piece::before {
+  content: '';
+  position: absolute;
+  inset: 2%;
+  border-radius: 50%;
 }
-.piece.black {
-  color: #f5f5f5;
-  background: radial-gradient(circle at 35% 30%, #555, #111);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5), inset 0 0 0 2px #000;
-}
+.tray-piece.white::before { background: rgba(255, 250, 240, 0.16); box-shadow: inset 0 0 0 1px rgba(245, 197, 66, 0.5); }
+.tray-piece.black::before { background: rgba(20, 16, 40, 0.55); box-shadow: inset 0 0 0 1px rgba(140, 120, 200, 0.45); }
+.tray-piece .piece-art { position: relative; z-index: 1; width: 88%; height: 88%; }
 
 /* Promotion picker */
 #promotion-picker {
@@ -211,8 +258,8 @@ button:active { transform: translateY(1px); }
 .promo-title { font-size: 18px; font-weight: 700; }
 .promo-choices { display: flex; gap: 12px; }
 .promo-choice {
-  width: 64px;
-  height: 64px;
+  width: 72px;
+  height: 84px;
   border-radius: 10px;
   background: var(--panel-2);
   border: 2px solid #4a3f66;
@@ -220,9 +267,10 @@ button:active { transform: translateY(1px); }
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   cursor: pointer;
-  font-size: 30px;
 }
+.promo-choice .piece-art { width: 54px; height: 54px; }
 .promo-choice:hover { border-color: var(--accent-2); }
 .promo-choice .char-label { font-size: 10px; }
 
@@ -327,6 +375,30 @@ button:active { transform: translateY(1px); }
 .spell-banner.show { color: #fff; text-shadow: 0 0 8px #f5c542; }
 .spell-banner.spell.show { color: #f5c542; }
 
+.boss-hp-wrap { width: 480px; margin: 2px 0; }
+.boss-hp-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  text-align: right;
+  margin-bottom: 2px;
+  min-height: 12px;
+  text-transform: uppercase;
+}
+.boss-hp-bar {
+  height: 10px;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.boss-hp-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #ff3355, #ff7744);
+  transition: width 0.1s;
+}
+
 .fight-hud {
   display: flex;
   align-items: center;
@@ -365,6 +437,44 @@ button:active { transform: translateY(1px); }
 .result-title.win { color: #9f9; }
 .result-title.lose { color: #f99; }
 .result-sub { font-size: 15px; color: var(--text-dim); }
+
+/* Game-over modal */
+.game-over-content {
+  text-align: center;
+  max-width: 420px;
+  padding: 28px 32px;
+}
+.game-over-title { margin: 0 0 6px; font-size: 40px; letter-spacing: 2px; }
+.game-over-title.win {
+  background: linear-gradient(90deg, var(--accent-2), #fff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.game-over-title.lose {
+  background: linear-gradient(90deg, #b06bff, #ff5d75);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.game-over-sub { color: var(--text-dim); font-size: 15px; margin: 0 0 18px; }
+.game-over-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.game-over-stats .stat {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #3a3153;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.game-over-stats .stat b { color: var(--accent-2); font-size: 15px; }
 
 .hidden { display: none !important; }
 

@@ -152,7 +152,9 @@ const OPENING_BOOK = [
 ];
 
 // Pick the AI's move. `board` is the current position (it's black's turn).
-function pickMove(board) {
+// `depthOverride` (optional) lets the UI select an AI strength; defaults to
+// CONFIG.AI_DEPTH.
+function pickMove(board, depthOverride) {
   if (board.gameOver) return null;
   if (board.turn !== 'black') return null;
 
@@ -162,7 +164,7 @@ function pickMove(board) {
     if (opening) return opening;
   }
 
-  const depth = CONFIG.AI_DEPTH;
+  const depth = depthOverride || CONFIG.AI_DEPTH;
   const moves = board.getMoves('black');
   moves.sort((a, b) => (b.captured ? 1 : 0) - (a.captured ? 1 : 0));
 

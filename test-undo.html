@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Undo Test</title>
+<link rel="stylesheet" href="css/style.css"></head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <h1>Touhou Chess</h1>
+    <div id="status"><span id="turn-indicator"></span><span id="game-over-banner"></span></div>
+    <div id="controls">
+      <button id="btn-new-game"></button>
+      <button id="btn-undo"></button>
+      <button id="btn-how-to"></button>
+      <button id="btn-export-log"></button>
+      <label class="ai-strength-label" for="ai-strength">AI</label>
+      <select id="ai-strength">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+      </select>
+      <button id="btn-sound">🔊 Sound</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="captured-tray-black" class="captured-tray"></div>
+    <div id="board-wrap"><div id="board"></div>
+      <div id="promotion-picker" class="hidden"><div class="promo-title"></div><div class="promo-choices"></div></div>
+    </div>
+    <div id="captured-tray-white" class="captured-tray"></div>
+  </main>
+  <div id="log-panel"><h2>Log</h2><ul id="move-log"></ul></div>
+</div>
+<div id="how-to-modal" class="modal hidden"><div class="modal-content"><h2>How</h2><button id="btn-close-how-to"></button></div></div>
+<div id="test-result" style="position:fixed;top:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre;max-width:60vw"></div>
+
+<script src="js/config.js"></script>
+<script src="js/audio/sfx.js"></script>
+<script src="js/art/characters.js"></script>
+<script src="js/chess/board.js"></script>
+<script src="js/chess/ai.js"></script>
+<script src="js/danmaku/engine.js"></script>
+<script src="js/danmaku/bosses.js"></script>
+<script src="js/ui/board-ui.js"></script>
+<script src="js/ui/fight-ui.js"></script>
+<script src="js/debug/log.js"></script>
+<script src="js/debug/replay.js"></script>
+<script src="js/main.js"></script>
+<script>
+// End-to-end test of Undo through the REAL game code (window.__TC hook).
+//
+// Scenario 1: play e2e4, let the AI reply, undo -> pristine starting position.
+// Scenario 2: win a capture fight, let the AI reply, undo -> the whole
+//   player-move + fight + AI-reply sequence is rewound (pieces restored,
+//   captured tray emptied, fight log rebuilt, back to the player's turn).
+(function () {
+  const out = [];
+  const el = document.getElementById('test-result');
+  function log(m) { out.push(m); el.textContent = out.join('\n'); }
+  function fail(m) { log('FAIL: ' + m); el.style.background = 'red'; throw new Error(m); }
+  function ok(m) { log('PASS: ' + m); }
+  function sq(r, c) { return document.querySelector(`#board .square[data-row="${r}"][data-col="${c}"]`); }
+  function click(r, c) { sq(r, c).dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+  function modalOpen() { return !document.getElementById('fight-modal').classList.contains('hidden'); }
+  function logLines() { return document.querySelectorAll('#move-log li').length; }
+  const TC = window.__TC;
+
+  // White pawn e5 (row 4, col 4) + black knight d6 (row 3, col 3).
+  function placeTarget(b) {
+    b.grid[4][4] = { type: 'p', color: 'white', character: 'cirno', hasMoved: true };
+    b.grid[3][3] = { type: 'n', color: 'black', character: 'nitori', hasMoved: true };
+    b.turn = 'white';
+    b.gameOver = false;
+  }
+
+  function scenario2() {
+    try {
+      const b = TC.board;
+      b.reset();
+      placeTarget(b);
+      TC.ui.clearLastMove();
+      TC.ui.render(b);
+      click(4, 4); // select the white pawn
+      click(3, 3); // capture the knight -> Normal fight vs Nitori
+      if (!modalOpen()) fail('scenario 2: fight modal did not open');
+      ok('scenario 2: capture opened the boss-fight modal');
+      TC.fight.engine._end('win');
+      setTimeout(() => {
+        try {
+          document.getElementById('btn-fight-continue').click();
+          // Wait for the capture to apply AND the AI's reply move.
+          setTimeout(() => {
+            try {
+              if (!b.grid[3][3] || b.grid[3][3].color !== 'white')
+                fail('scenario 2: expected the white pawn on d6 before undo');
+              const histBeforeUndo = b.moveHistory.length;
+              if (histBeforeUndo < 2)
+                fail('scenario 2: expected player capture + AI reply in history (got ' + histBeforeUndo + ')');
+              ok('scenario 2: capture + AI reply recorded (history ' + histBeforeUndo + ')');
+              TC.undo();
+              // The whole sequence must be rewound to the placed position.
+              if (!b.grid[4][4] || b.grid[4][4].type !== 'p' || b.grid[4][4].color !== 'white')
+                fail('scenario 2: pawn not restored to e5 after undo');
+              ok('scenario 2: pawn restored to e5 after undo');
+              if (!b.grid[3][3] || b.grid[3][3].type !== 'n' || b.grid[3][3].color !== 'black')
+                fail('scenario 2: knight not restored to d6 after undo');
+              ok('scenario 2: knight restored to d6 after undo');
+              if (b.moveHistory.length !== 0)
+                fail('scenario 2: moveHistory not cleared by undo (got ' + b.moveHistory.length + ')');
+              ok('scenario 2: moveHistory cleared by undo');
+              if (TC.captured.length !== 0)
+                fail('scenario 2: captured tray not emptied by undo (got ' + TC.captured.length + ')');
+              ok('scenario 2: captured tray emptied by undo');
+              if (logLines() !== 0)
+                fail('scenario 2: fight log not rebuilt by undo (got ' + logLines() + ' lines)');
+              ok('scenario 2: fight log rebuilt by undo');
+              if (b.turn !== 'white' || b.gameOver)
+                fail('scenario 2: not back at a clean player turn after undo');
+              ok('scenario 2: back to a clean player turn after undo');
+              log('ALL UNDO TESTS PASSED');
+              el.style.background = 'lime';
+            } catch (e) { fail(e.message); }
+          }, 1000);
+        } catch (e) { fail(e.message); }
+      }, 80);
+    } catch (e) { fail(e.message); }
+  }
+
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        const b = TC.board;
+        // Scenario 1: e2e4 (row 6 col 4 -> row 4 col 4), AI replies, undo.
+        click(6, 4);
+        click(4, 4);
+        setTimeout(() => {
+          try {
+            if (b.moveHistory.length < 2)
+              fail('scenario 1: expected player move + AI reply (history ' + b.moveHistory.length + ')');
+            ok('scenario 1: player move + AI reply recorded');
+            if (!b.grid[4][4] || b.grid[4][4].type !== 'p' || b.grid[4][4].color !== 'white')
+              fail('scenario 1: pawn not on e4 before undo');
+            TC.undo();
+            if (b.moveHistory.length !== 0)
+              fail('scenario 1: moveHistory not cleared by undo (got ' + b.moveHistory.length + ')');
+            ok('scenario 1: moveHistory cleared by undo');
+            if (!b.grid[6][4] || b.grid[6][4].type !== 'p' || b.grid[6][4].color !== 'white')
+              fail('scenario 1: e2 pawn not restored after undo');
+            ok('scenario 1: e2 pawn restored after undo');
+            if (b.grid[4][4]) fail('scenario 1: e4 still occupied after undo');
+            ok('scenario 1: e4 vacated after undo');
+            if (b.turn !== 'white' || b.gameOver) fail('scenario 1: not back to player turn after undo');
+            ok('scenario 1: back to player turn after undo');
+            if (logLines() !== 0) fail('scenario 1: fight log not rebuilt by undo');
+            ok('scenario 1: fight log rebuilt by undo');
+            // Undo with nothing to undo is a no-op (must not throw).
+            TC.undo();
+            ok('undo with empty stack is a no-op');
+            scenario2();
+          } catch (e) { fail(e.message); }
+        }, 1000);
+      } catch (e) { fail(e.message); }
+    }, 300);
+  });
+})();
+</script>
+</body>
+</html>

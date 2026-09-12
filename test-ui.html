@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>UI Test</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <h1>Touhou Chess</h1>
+      <div id="status"><span id="turn-indicator"></span><span id="game-over-banner"></span></div>
+      <div id="controls">
+        <button id="btn-new-game"></button>
+        <button id="btn-undo"></button>
+        <button id="btn-how-to"></button>
+        <button id="btn-export-log"></button>
+        <label class="ai-strength-label" for="ai-strength">AI</label>
+        <select id="ai-strength">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+        <button id="btn-sound">🔊 Sound</button>
+      </div>
+    </header>
+    <main id="main">
+      <div id="captured-tray-black" class="captured-tray"></div>
+      <div id="board-wrap"><div id="board"></div>
+        <div id="promotion-picker" class="hidden"><div class="promo-title"></div><div class="promo-choices"></div></div>
+      </div>
+      <div id="captured-tray-white" class="captured-tray"></div>
+    </main>
+    <div id="log-panel"><h2>Log</h2><ul id="move-log"></ul></div>
+  </div>
+  <div id="how-to-modal" class="modal hidden"><div class="modal-content"><h2>How</h2><button id="btn-close-how-to"></button></div></div>
+
+  <div id="test-result" style="position:fixed;top:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/art/characters.js"></script>
+  <script src="js/chess/board.js"></script>
+  <script src="js/chess/ai.js"></script>
+  <script src="js/audio/sfx.js"></script>
+  <script src="js/danmaku/engine.js"></script>
+  <script src="js/danmaku/bosses.js"></script>
+  <script src="js/ui/fight-ui.js"></script>
+  <script src="js/ui/board-ui.js"></script>
+  <script src="js/debug/log.js"></script>
+  <script src="js/debug/replay.js"></script>
+  <script src="js/main.js"></script>
+  <script>
+    // Automated UI test: simulate clicks and verify the game flow.
+    (function () {
+      const out = [];
+      const resultEl = document.getElementById('test-result');
+      function log(msg) { out.push(msg); resultEl.textContent = out.join('\n'); }
+      function fail(msg) { log('FAIL: ' + msg); resultEl.style.background = 'red'; throw new Error(msg); }
+      function ok(msg) { log('PASS: ' + msg); }
+
+      // Find a square element by row/col.
+      function sq(r, c) {
+        return document.querySelector(`#board .square[data-row="${r}"][data-col="${c}"]`);
+      }
+      function click(r, c) { sq(r, c).dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          try {
+            // 1. Board should have 64 squares and 32 pieces.
+            const squares = document.querySelectorAll('#board .square');
+            const pieces = document.querySelectorAll('#board .piece');
+            if (squares.length !== 64) fail('expected 64 squares, got ' + squares.length);
+            ok('64 squares rendered');
+            if (pieces.length !== 32) fail('expected 32 pieces, got ' + pieces.length);
+            ok('32 pieces rendered');
+
+            // 2. Select the e2 pawn (row 6, col 4) and move it to e4 (row 4, col 4).
+            click(6, 4); // select e2
+            const selected = sq(6, 4).classList.contains('selected');
+            if (!selected) fail('e2 pawn not selected after click');
+            ok('e2 pawn selected');
+            // Check that legal-move hints appear on e3 and e4.
+            const hints = document.querySelectorAll('#board .hint-move');
+            if (hints.length < 2) fail('expected >=2 move hints, got ' + hints.length);
+            ok('move hints shown (' + hints.length + ')');
+            click(4, 4); // move to e4
+
+            // 3. After the move, the pawn should be on e4 and it should be the AI's turn.
+            setTimeout(() => {
+              try {
+                const e4 = sq(4, 4).querySelector('.piece');
+                if (!e4) fail('no piece on e4 after move');
+                ok('pawn moved to e4');
+                // The AI should respond within ~60ms + search time.
+                setTimeout(() => {
+                  try {
+                    const turn = document.getElementById('turn-indicator').textContent;
+                    const logLines = document.querySelectorAll('#move-log li');
+                    if (logLines.length < 2) fail('expected >=2 log lines (player + AI), got ' + logLines.length);
+                    ok('AI responded (log lines: ' + logLines.length + ')');
+                    // It should now be the player's turn again.
+                    if (!/Your move/.test(turn)) fail('expected player turn, got: ' + turn);
+                    ok('back to player turn');
+                    log('ALL UI TESTS PASSED');
+                    resultEl.style.background = 'lime';
+                  } catch (e) { fail(e.message); }
+                }, 800);
+              } catch (e) { fail(e.message); }
+            }, 100);
+          } catch (e) { fail(e.message); }
+        }, 200);
+      });
+    })();
+  </script>
+</body>
+</html>

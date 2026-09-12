@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Game Over Test</title>
+<link rel="stylesheet" href="css/style.css"></head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <h1>Touhou Chess</h1>
+    <div id="status"><span id="turn-indicator"></span><span id="game-over-banner"></span></div>
+    <div id="controls">
+      <button id="btn-new-game"></button>
+      <button id="btn-undo"></button>
+      <button id="btn-how-to"></button>
+      <button id="btn-export-log"></button>
+      <button id="btn-sound">🔊 Sound</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="captured-tray-black" class="captured-tray"></div>
+    <div id="board-wrap"><div id="board"></div>
+      <div id="promotion-picker" class="hidden"><div class="promo-title"></div><div class="promo-choices"></div></div>
+    </div>
+    <div id="captured-tray-white" class="captured-tray"></div>
+  </main>
+  <div id="log-panel"><h2>Log</h2><ul id="move-log"></ul></div>
+</div>
+<div id="how-to-modal" class="modal hidden"><div class="modal-content"><h2>How</h2><button id="btn-close-how-to"></button></div></div>
+<div id="game-over-modal" class="modal hidden">
+  <div class="modal-content game-over-content">
+    <h2 id="game-over-title"></h2>
+    <p id="game-over-sub" class="game-over-sub"></p>
+    <div id="game-over-stats" class="game-over-stats"></div>
+    <button id="btn-game-over-new">Play Again</button>
+  </div>
+</div>
+<div id="test-result" style="position:fixed;bottom:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre;max-width:60vw"></div>
+
+<script src="js/config.js"></script>
+<script src="js/audio/sfx.js"></script>
+<script src="js/art/characters.js"></script>
+<script src="js/chess/board.js"></script>
+<script src="js/chess/ai.js"></script>
+<script src="js/danmaku/engine.js"></script>
+<script src="js/danmaku/bosses.js"></script>
+<script src="js/ui/board-ui.js"></script>
+<script src="js/ui/fight-ui.js"></script>
+<script src="js/debug/log.js"></script>
+<script src="js/debug/replay.js"></script>
+<script src="js/main.js"></script>
+<script>
+// Verify the game-over modal: place a white queen on e7, capture Kaguya on e8,
+// win the fight, and confirm the "Victory" modal shows with stats.
+(function () {
+  const out = [];
+  const el = document.getElementById('test-result');
+  function log(m){ out.push(m); el.textContent = out.join('\n'); }
+  function fail(m){ log('FAIL: '+m); el.style.background='red'; throw new Error(m); }
+  function ok(m){ log('PASS: '+m); }
+  function sq(r,c){ return document.querySelector(`#board .square[data-row="${r}"][data-col="${c}"]`); }
+  function click(r,c){ sq(r,c).dispatchEvent(new MouseEvent('click',{bubbles:true})); }
+  const TC = window.__TC;
+
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        const b = TC.board;
+        // White queen on e7 (row 1, col 4), directly below Kaguya on e8 (row 0, col 4).
+        b.grid[1][4] = { type: 'q', color: 'white', character: 'marisa', hasMoved: true };
+        b.turn = 'white';
+        TC.ui.render(b);
+        click(1, 4); // select queen
+        click(0, 4); // capture the king -> Normal fight vs Kaguya
+        if (TC.fight.engine.playerChar !== 'marisa') fail('ship should be marisa');
+        ok('king-capture opened the boss fight (Kaguya)');
+        TC.fight.engine._end('win');
+        setTimeout(() => {
+          try {
+            document.getElementById('btn-fight-continue').click();
+            setTimeout(() => {
+              try {
+                const modal = document.getElementById('game-over-modal');
+                if (modal.classList.contains('hidden')) fail('game-over modal not shown after winning king capture');
+                ok('game-over modal shown');
+                const title = document.getElementById('game-over-title').textContent;
+                if (!/^Victory/.test(title)) fail('expected Victory, got: ' + title);
+                ok('title is Victory');
+                const stats = document.getElementById('game-over-stats').textContent;
+                if (!/Moves/.test(stats) || !/Fights won/.test(stats)) fail('stats missing: ' + stats);
+                ok('stats rendered (moves / fights)');
+                // Play Again resets to a fresh board.
+                document.getElementById('btn-game-over-new').click();
+                setTimeout(() => {
+                  try {
+                    if (!document.getElementById('game-over-modal').classList.contains('hidden')) fail('modal still open after Play Again');
+                    if (b.turn !== 'white' || b.gameOver) fail('board not reset after Play Again');
+                    if (!b.grid[0][4] || b.grid[0][4].type !== 'k') fail('Kaguya not back on e8 after reset');
+                    ok('Play Again reset the board');
+                    log('ALL GAME OVER TESTS PASSED');
+                    el.style.background = 'lime';
+                  } catch (e) { fail(e.message); }
+                }, 100);
+              } catch (e) { fail(e.message); }
+            }, 80);
+          } catch (e) { fail(e.message); }
+        }, 80);
+      } catch (e) { fail(e.message); }
+    }, 300);
+  });
+})();
+</script>
+</body>
+</html>

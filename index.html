@@ -19,6 +19,13 @@
         <button id="btn-undo">Undo</button>
         <button id="btn-how-to">How to Play</button>
         <button id="btn-export-log" title="Download this game as a JSON log for offline replay/debugging">Export Log</button>
+        <label class="ai-strength-label" for="ai-strength">AI</label>
+        <select id="ai-strength" title="AI strength (search depth)">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+        <button id="btn-sound" title="Toggle sound effects">🔊 Sound</button>
       </div>
     </header>
 
@@ -57,8 +64,18 @@
     </div>
   </div>
 
+  <div id="game-over-modal" class="modal hidden">
+    <div class="modal-content game-over-content">
+      <h2 id="game-over-title"></h2>
+      <p id="game-over-sub" class="game-over-sub"></p>
+      <div id="game-over-stats" class="game-over-stats"></div>
+      <button id="btn-game-over-new">Play Again</button>
+    </div>
+  </div>
+
   <!-- Scripts: no build step, no dependencies. -->
   <script src="js/config.js"></script>
+  <script src="js/audio/sfx.js"></script>
   <script src="js/art/characters.js"></script>
   <script src="js/chess/board.js"></script>
   <script src="js/chess/ai.js"></script>

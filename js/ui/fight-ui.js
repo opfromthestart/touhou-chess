@@ -28,6 +28,10 @@ class FightUI {
           <div class="fight-diff" id="fight-diff"></div>
         </div>
         <div class="spell-banner" id="spell-banner"></div>
+        <div class="boss-hp-wrap">
+          <div class="boss-hp-label" id="boss-hp-label"></div>
+          <div class="boss-hp-bar"><div class="boss-hp-fill" id="boss-hp-fill"></div></div>
+        </div>
         <canvas id="danmaku-canvas" width="480" height="640"></canvas>
         <div class="fight-hud">
           <div class="hud-item">Lives <span id="hud-lives"></span></div>
@@ -57,7 +61,9 @@ class FightUI {
 
   // Start a fight. bossId: the AI boss character. difficulty: 'normal'|'lunatic'.
   // playerPieceType: the player piece involved (drives danmaku stats + ship color).
-  startFight(bossId, difficulty, playerPieceType, onResult) {
+  // playerChar: the protagonist character actually fighting (drives the ship
+  // sprite — e.g. 'sakuya' vs 'youmu' for rooks).
+  startFight(bossId, difficulty, playerPieceType, playerChar, onResult) {
     this._onResult = onResult;
     this._result = null;
     const boss = BOSSES[bossId];
@@ -70,9 +76,16 @@ class FightUI {
       difficulty === 'lunatic' ? 'LUNATIC' : 'NORMAL';
     this.modal.querySelector('#fight-diff').className =
       'fight-diff ' + (difficulty === 'lunatic' ? 'lunatic' : 'normal');
-    // Portrait: a colored orb placeholder (art in M6).
+    // Portrait: the boss's character sprite (same art as the board piece).
     const portrait = this.modal.querySelector('#boss-portrait');
-    portrait.style.background = `radial-gradient(circle at 35% 30%, ${boss.color}, #111)`;
+    portrait.style.background = `radial-gradient(circle at 35% 30%, ${boss.color}55, #111)`;
+    portrait.innerHTML = '';
+    const pcv = document.createElement('canvas');
+    pcv.width = 88;
+    pcv.height = 88;
+    drawCharacter(pcv.getContext('2d'), bossId, 4, 4, 0.84);
+    pcv.className = 'portrait-canvas';
+    portrait.appendChild(pcv);
 
     // Ship color from the player's character.
     this.engine.playerColor = shipColorForPiece(playerPieceType);
@@ -86,7 +99,8 @@ class FightUI {
       bgTop: boss.bgTop,
       bgBottom: boss.bgBottom,
       move: boss.move,
-    }, stats);
+      charId: bossId,
+    }, stats, playerPieceType, playerChar);
   }
 
   _banner(name, isSpell) {
@@ -112,6 +126,9 @@ class FightUI {
     m.querySelector('#hud-graze').textContent = hud.graze;
     m.querySelector('#hud-phase').textContent = `${hud.phase + 1}/${hud.phaseCount}`;
     m.querySelector('#bomb-gauge-fill').style.width = `${Math.round(hud.bombGauge * 100)}%`;
+    const hpPct = hud.phaseMaxHp > 0 ? (hud.phaseHp / hud.phaseMaxHp) * 100 : 0;
+    m.querySelector('#boss-hp-fill').style.width = `${hpPct}%`;
+    m.querySelector('#boss-hp-label').textContent = hud.phaseName || '';
   }
 
   _onEnd(result) {

@@ -64,6 +64,39 @@ const CONFIG = {
     lunatic: { phaseCount: 4, speed: 1.2, density: 1.35, homing: 1.3 },
   },
 
+  // Player shot patterns, one per piece type. The protagonist assigned to the
+  // piece involved in the capture fires with their signature pattern. Each
+  // pattern auto-fires upward and damages the current spell card.
+  SHOT_PATTERNS: {
+    k: { // Reimu — wide five-shot spread, a strong center stream.
+      interval: 8, count: 5, spread: 0.5, speed: 10, damage: 1, r: 3,
+      color: '#ff5577', shape: 'circle',
+    },
+    q: { // Marisa — homing magic bullets (slow turn, high damage).
+      interval: 14, count: 3, spread: 0.35, speed: 7, damage: 2, r: 4,
+      color: '#ffaa33', shape: 'star', type: 'homing', turn: 0.05, rotSpeed: 0.15,
+    },
+    r: { // Sakuya / Youmu — fast, tight piercing stream.
+      interval: 4, count: 2, spread: 0.08, speed: 12, damage: 1, r: 2.5,
+      color: '#66ccff', shape: 'diamond',
+    },
+    b: { // Sanae / Reisen — curving lightning bolts.
+      interval: 10, count: 3, spread: 0.25, speed: 9, damage: 1, r: 3,
+      color: '#ff88cc', shape: 'cross', type: 'curve', curve: 0.03,
+    },
+    n: { // Aya / Hatate — four-shot wing fan.
+      interval: 9, count: 4, spread: 0.7, speed: 9, damage: 1, r: 3,
+      color: '#cc99ff', shape: 'petal', rotSpeed: 0.1,
+    },
+    p: { // Cirno — wide, slow ice fan.
+      interval: 7, count: 5, spread: 0.9, speed: 8, damage: 1, r: 3,
+      color: '#66ddff', shape: 'diamond',
+    },
+  },
+
+  // Boss hitbox radius (for player-shot collision).
+  BOSS_HITBOX: 22,
+
   // Phase length in seconds (each phase ~15-25s).
   PHASE_SECONDS: 18,
 
@@ -81,8 +114,15 @@ const CONFIG = {
     kaguya: { normal: 0.30, lunatic: 0.12 },
   },
 
-  // AI search depth.
+  // AI search depth (default strength).
   AI_DEPTH: 3,
+
+  // AI strengths selectable from the menu (plan §8): search depth per level.
+  AI_STRENGTHS: {
+    easy: { label: 'Easy', depth: 2 },
+    normal: { label: 'Normal', depth: 3 },
+    hard: { label: 'Hard', depth: 4 },
+  },
 
   // Board size.
   BOARD_SIZE: 8,

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Danmaku Test</title></head>
+<body>
+<canvas id="c" width="480" height="640"></canvas>
+<div id="result" style="position:fixed;top:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre"></div>
+<script src="js/config.js"></script>
+<script src="js/danmaku/engine.js"></script>
+<script src="js/danmaku/bosses.js"></script>
+<script>
+(function () {
+  const resultEl = document.getElementById('result');
+  const out = [];
+  function log(m){ out.push(m); resultEl.textContent = out.join('\n'); }
+  function fail(m){ log('FAIL: '+m); resultEl.style.background='red'; throw new Error(m); }
+  function ok(m){ log('PASS: '+m); }
+  const canvas = document.getElementById('c');
+  const bossCfg = { color:'#9a8cff', bgTop:'#0b0b1e', bgBottom:'#04040a', move:'still' };
+
+  // --- Hitbox: collision radius must be hb/2 (3 for a king), not hb (6). ---
+  const e = new DanmakuEngine(canvas, {});
+  e.player = { x:240, y:580, lives:3, bombs:3, hitbox:6, focusHitbox:1.5, focus:false, invuln:0, alive:true, speed:4.2 };
+  e.boss = { x:240, y:90 };
+  e.bullets = []; e.playerShots = []; e.result=null;
+  e.bullets.push(makeBullet(240, 580-9, 0, 0, { r:4 }));
+  e._checkCollisions();
+  if (e.player.lives === 3) ok('hitbox: bullet at dist 9 does NOT hit (radius=3)');
+  else fail('hitbox: bullet at dist 9 hit (radius too large)');
+  e.player.lives = 3; e.player.invuln = 0;
+  e.bullets = [makeBullet(240, 580-5, 0, 0, { r:4 })];
+  e._checkCollisions();
+  if (e.player.lives === 2) ok('hitbox: bullet at dist 5 hits (radius=3)');
+  else fail('hitbox: bullet at dist 5 did not hit');
+
+  // --- Per-phase HP: each spell card has its own gauge; breaking it advances. ---
+  const e2 = new DanmakuEngine(canvas, { onEnd: (r) => log('onEnd2: '+r) });
+  e2.start(getPhases('rumia','normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
+  e2.stop();
+  if (e2.phaseMaxHp === 100) ok('phase 0 has its own HP gauge (100)');
+  else fail('phase 0 HP gauge wrong: '+e2.phaseMaxHp);
+  e2.phaseHp = 0;
+  e2.update();
+  if (e2.phaseIndex === 1) ok('breaking a card advances to the next phase');
+  else fail('breaking a card did not advance (phaseIndex='+e2.phaseIndex+')');
+  if (e2.phaseMaxHp === 120) ok('phase 1 has its own HP gauge (120)');
+  else fail('phase 1 HP gauge wrong: '+e2.phaseMaxHp);
+
+  // --- Shot patterns differ per piece type. ---
+  const patterns = {};
+  for (const t of ['k','q','r','b','n','p']) {
+    const ex = new DanmakuEngine(canvas, {});
+    ex.start(getPhases('rumia','normal'), bossCfg, CONFIG.DANMAKU_STATS[t], t);
+    ex.stop();
+    ex.player.alive = true;
+    for (let i = 0; i < 30; i++) ex.update();
+    patterns[t] = { count: ex.shotPattern.count, shape: ex.shotPattern.shape, shots: ex.playerShots.length };
+  }
+  log('patterns: ' + JSON.stringify(patterns));
+  const shapes = new Set(Object.values(patterns).map(p => p.shape));
+  if (shapes.size >= 3) ok('shot patterns have shape variety ('+shapes.size+' shapes)');
+  else fail('shot patterns lack shape variety');
+  if (patterns.k.count === 5 && patterns.q.count === 3 && patterns.r.count === 2)
+    ok('shot patterns differ per piece type (counts k=5 q=3 r=2)');
+  else fail('shot patterns do not differ per piece type');
+
+  // --- Boss bullets have shape variety (art). ---
+  const e3 = new DanmakuEngine(canvas, {});
+  e3.start(getPhases('rumia','normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
+  e3.stop();
+  for (let i = 0; i < 60; i++) e3.update();
+  const bulletShapes = new Set(e3.bullets.map(b => b.shape));
+  log('bullet shapes: ' + JSON.stringify([...bulletShapes]));
+  if (bulletShapes.size >= 2) ok('boss bullets have shape variety ('+JSON.stringify([...bulletShapes])+')');
+  else fail('boss bullets lack shape variety');
+
+  // --- Breaking the LAST card ends the fight (win). ---
+  const e4 = new DanmakuEngine(canvas, { onEnd: (r) => log('onEnd4: '+r) });
+  e4.start(getPhases('rumia','normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
+  e4.stop();
+  e4.phaseIndex = e4.phases.length - 1;
+  e4._startPhase(e4.phaseIndex);
+  e4.phaseHp = 0;
+  e4.update();
+  if (e4.result === 'win') ok('breaking the last card ends the fight (win)');
+  else fail('breaking the last card did not end the fight (result='+e4.result+')');
+
+  log('ALL DANMAKU TESTS PASSED');
+  resultEl.style.background = 'lime';
+})();
+</script>
+</body>
+</html>
