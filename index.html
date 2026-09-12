@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Touhou Chess</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <h1>Touhou Chess</h1>
+      <div id="status">
+        <span id="turn-indicator">White (Protagonists) to move</span>
+        <span id="game-over-banner"></span>
+      </div>
+      <div id="controls">
+        <button id="btn-new-game">New Game</button>
+        <button id="btn-undo">Undo</button>
+        <button id="btn-how-to">How to Play</button>
+      </div>
+    </header>
+
+    <main id="main">
+      <div id="captured-tray-black" class="captured-tray" title="Pieces captured by Black (bosses)"></div>
+      <div id="board-wrap">
+        <div id="board"></div>
+        <div id="promotion-picker" class="hidden">
+          <div class="promo-title">Promote to:</div>
+          <div class="promo-choices"></div>
+        </div>
+      </div>
+      <div id="captured-tray-white" class="captured-tray" title="Pieces captured by White (protagonists)"></div>
+    </main>
+
+    <div id="log-panel">
+      <h2>Fight Log</h2>
+      <ul id="move-log"></ul>
+    </div>
+  </div>
+
+  <div id="how-to-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>How to Play</h2>
+      <p><strong>You command the protagonists (white). The AI commands the youkai bosses (black).</strong></p>
+      <ul>
+        <li>Standard chess movement. <strong>No check, no checkmate, no stalemate.</strong></li>
+        <li>The game ends <strong>only when a king is captured</strong>.</li>
+        <li>Any capture triggers a <strong>danmaku boss fight</strong>: survive the boss and the capture
+            goes through; lose and <em>your</em> piece is the one captured.</li>
+        <li><strong>Castle "en passant"</strong>: if you castle through a square an enemy piece attacks,
+            that piece can capture your king the following turn on the square your king is now on.</li>
+        <li>No draws — the game continues until a king falls.</li>
+      </ul>
+      <button id="btn-close-how-to">Close</button>
+    </div>
+  </div>
+
+  <!-- Scripts: no build step, no dependencies. -->
+  <script src="js/config.js"></script>
+  <script src="js/chess/board.js"></script>
+  <script src="js/chess/ai.js"></script>
+  <script src="js/danmaku/engine.js"></script>
+  <script src="js/danmaku/bosses.js"></script>
+  <script src="js/ui/board-ui.js"></script>
+  <script src="js/ui/fight-ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
