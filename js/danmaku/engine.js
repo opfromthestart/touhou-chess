@@ -323,6 +323,8 @@ class DanmakuEngine {
 
   _updateBullets() {
     const p = this.player;
+    // Focus slows bullet movement to 40% (player moves at normal speed).
+    const slow = p.focus ? 0.4 : 1;
     for (const b of this.bullets) {
       if (!b.active) continue;
       if (b.type === 'homing' && p.alive) {
@@ -344,9 +346,9 @@ class DanmakuEngine {
         b.vx = Math.cos(newCur) * spd;
         b.vy = Math.sin(newCur) * spd;
       }
-      if (b.rotSpeed) b.rot += b.rotSpeed;
-      b.x += b.vx;
-      b.y += b.vy;
+      if (b.rotSpeed) b.rot += b.rotSpeed * slow;
+      b.x += b.vx * slow;
+      b.y += b.vy * slow;
       b.life--;
       if (b.life <= 0 || b.x < -20 || b.x > this.W + 20 || b.y < -20 || b.y > this.H + 20) {
         b.active = false;
