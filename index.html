@@ -18,6 +18,7 @@
         <button id="btn-new-game">New Game</button>
         <button id="btn-undo">Undo</button>
         <button id="btn-how-to">How to Play</button>
+        <button id="btn-export-log" title="Download this game as a JSON log for offline replay/debugging">Export Log</button>
       </div>
     </header>
 
@@ -58,12 +59,15 @@
 
   <!-- Scripts: no build step, no dependencies. -->
   <script src="js/config.js"></script>
+  <script src="js/art/characters.js"></script>
   <script src="js/chess/board.js"></script>
   <script src="js/chess/ai.js"></script>
   <script src="js/danmaku/engine.js"></script>
   <script src="js/danmaku/bosses.js"></script>
   <script src="js/ui/board-ui.js"></script>
   <script src="js/ui/fight-ui.js"></script>
+  <script src="js/debug/log.js"></script>
+  <script src="js/debug/replay.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
