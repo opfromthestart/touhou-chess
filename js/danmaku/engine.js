@@ -398,6 +398,21 @@ class DanmakuEngine {
     const S = this.shotPattern;
     if (!S) return;
 
+    // Laser (Marisa): a continuous beam straight up from the ship, not a
+    // stream of bullets. While the beam overlaps the boss it deals damage
+    // every frame; off-axis it does nothing.
+    if (S.type === 'laser') {
+      if (p.alive && this.phaseMaxHp > 0) {
+        const halfW = (S.width || 8) / 2;
+        if (b.y < p.y && Math.abs(b.x - p.x) < CONFIG.BOSS_HITBOX + halfW) {
+          this.phaseHp -= S.damage;
+          if (this.phaseHp < 0) this.phaseHp = 0;
+          this.score += S.damage * 10; // same 10 points per damage as bullets
+        }
+      }
+      return;
+    }
+
     // Fire (auto).
     if (p.alive && this.phaseMaxHp > 0 && this.frame % S.interval === 0) {
       sfxPlay('fire');
@@ -561,6 +576,25 @@ class DanmakuEngine {
     for (const b of this.bullets) {
       if (!b.active) continue;
       this._drawBullet(ctx, b);
+    }
+
+    // Player laser beam (continuous; the laser pattern emits no bullets).
+    const S = this.shotPattern;
+    if (S && S.type === 'laser' && this.player.alive && !this.result && this.phaseMaxHp > 0) {
+      const w = S.width || 8;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(this.player.x, this.player.y - 10);
+      ctx.lineTo(this.player.x, 0);
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = S.color;
+      ctx.lineWidth = w * 2.2;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = w * 0.45;
+      ctx.stroke();
+      ctx.restore();
     }
 
     // Player shots.

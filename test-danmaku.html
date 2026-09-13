@@ -53,15 +53,45 @@
     ex.stop();
     ex.player.alive = true;
     for (let i = 0; i < 30; i++) ex.update();
-    patterns[t] = { count: ex.shotPattern.count, shape: ex.shotPattern.shape, shots: ex.playerShots.length };
+    patterns[t] = { count: ex.shotPattern.count, type: ex.shotPattern.type, shape: ex.shotPattern.shape, shots: ex.playerShots.length };
   }
   log('patterns: ' + JSON.stringify(patterns));
   const shapes = new Set(Object.values(patterns).map(p => p.shape));
   if (shapes.size >= 3) ok('shot patterns have shape variety ('+shapes.size+' shapes)');
   else fail('shot patterns lack shape variety');
-  if (patterns.k.count === 5 && patterns.q.count === 3 && patterns.r.count === 2)
-    ok('shot patterns differ per piece type (counts k=5 q=3 r=2)');
-  else fail('shot patterns do not differ per piece type');
+  // Patterns must match their characters: Reimu's orbs home (her normal shot
+  // "usually has homing properties"), Marisa fires a continuous laser, and
+  // the rook keeps its two-shot knife stream.
+  if (patterns.k.count === 5 && patterns.k.type === 'homing' &&
+      patterns.q.type === 'laser' && patterns.r.count === 2)
+    ok('shot patterns match their characters (Reimu homing, Marisa laser, rook stream)');
+  else fail('shot patterns do not match their characters: ' +
+    JSON.stringify({ k: patterns.k, q: patterns.q, r: patterns.r }));
+
+  // --- Marisa's laser: continuous beam, damages only when aligned. ---
+  // The boss position is driven by its movement script (recomputed every
+  // frame), so we steer the PLAYER relative to the boss instead.
+  const eL = new DanmakuEngine(canvas, {});
+  eL.start(getPhases('rumia','normal'), bossCfg, CONFIG.DANMAKU_STATS.q, 'q');
+  eL.stop();
+  eL.player.alive = true;
+  const steerPlayer = (mode) => {
+    // 'aligned': ship directly under the boss; 'off': on the far side of
+    // the screen so the beam can never overlap the boss.
+    if (mode === 'aligned') eL.player.x = eL.boss.x;
+    else eL.player.x = eL.boss.x < eL.W / 2 ? eL.W - 10 : 10;
+    eL.bullets.length = 0; // keep the player safe while measuring
+  };
+  steerPlayer('aligned');
+  const hpA = eL.phaseHp;
+  for (let i = 0; i < 60; i++) { steerPlayer('aligned'); eL.update(); }
+  const dmgAligned = hpA - eL.phaseHp;
+  if (Math.abs(dmgAligned - 30) <= 1) ok('laser: aligned beam deals ~30 damage/sec');
+  else fail('laser: aligned damage wrong (' + dmgAligned + ' over 60 frames)');
+  const hpB = eL.phaseHp;
+  for (let i = 0; i < 30; i++) { steerPlayer('off'); eL.update(); }
+  if (eL.phaseHp === hpB) ok('laser: no damage while off-axis');
+  else fail('laser: off-axis boss took ' + (hpB - eL.phaseHp) + ' damage');
 
   // --- Boss bullets have shape variety (art). ---
   const e3 = new DanmakuEngine(canvas, {});

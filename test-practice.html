@@ -136,9 +136,9 @@
           fail('difficulty not Lunatic in header');
         ok('fight header shows Kaguya on LUNATIC');
         if (eng.playerChar !== 'marisa') fail('engine ship is not Marisa (got ' + eng.playerChar + ')');
-        if (eng.shotPattern.count !== CONFIG.SHOT_PATTERNS.q.count || eng.shotPattern.type !== 'homing')
-          fail('engine does not use the queen shot pattern');
-        ok('ship uses the selected piece (Marisa, homing stars)');
+        if (eng.shotPattern.type !== 'laser')
+          fail('engine does not use the queen shot pattern (got ' + eng.shotPattern.type + ')');
+        ok('ship uses the selected piece (Marisa, laser)');
         const qStats = CONFIG.DANMAKU_STATS.q;
         if (eng.player.lives !== qStats.lives || eng.player.bombs !== qStats.bombs)
           fail('danmaku stats do not match the queen (' + eng.player.lives + '/' + eng.player.bombs + ')');

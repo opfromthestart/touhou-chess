@@ -73,13 +73,18 @@ const CONFIG = {
   // damage-per-second: k 50, q 30, r 24, b 17, n 15, p 6.7. A pawn must NOT
   // out-damage a king — Cirno gets a single weak ice shard.
   SHOT_PATTERNS: {
-    k: { // Reimu — five-shot spread, the strongest firepower.
-      interval: 6, count: 5, spread: 0.45, speed: 10, damage: 1, r: 3,
-      color: '#ff5577', shape: 'circle',
+    k: { // Reimu — five homing Dream-Seal orbs, the strongest firepower.
+      // Her normal shot is "usually with homing properties" (wiki): the
+      // ofuda/orbs chase the boss on their own.
+      interval: 6, count: 5, spread: 0.5, speed: 9, damage: 1, r: 3,
+      color: '#ff5577', shape: 'circle', type: 'homing', turn: 0.06,
     },
-    q: { // Marisa — homing magic bullets (slow turn, high damage).
-      interval: 12, count: 3, spread: 0.3, speed: 8, damage: 2, r: 4,
-      color: '#ffaa33', shape: 'star', type: 'homing', turn: 0.05, rotSpeed: 0.15,
+    q: { // Marisa — a continuous laser straight up from the ship (her
+      // Illusion Laser / Stream Laser skills; Master Spark lineage).
+      // No discrete bullets: while the beam overlaps the boss it deals
+      // `damage` per frame (0.5 x 60 = 30 DPS, same as before).
+      type: 'laser', damage: 0.5, width: 8,
+      color: '#ffaa33', shape: 'laser',
     },
     r: { // Sakuya / Youmu — fast, tight piercing stream.
       interval: 5, count: 2, spread: 0.08, speed: 12, damage: 1, r: 2.5,
