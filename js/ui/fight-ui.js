@@ -41,6 +41,7 @@ class FightUI {
           <div class="hud-item">Phase <span id="hud-phase"></span></div>
           <div class="bomb-gauge"><div class="bomb-gauge-fill" id="bomb-gauge-fill"></div></div>
         </div>
+        <div class="fight-hints">Arrows / WASD move &nbsp;·&nbsp; Space / Z bomb &nbsp;·&nbsp; hold X to focus (slower, smaller hitbox)</div>
         <div class="fight-result hidden" id="fight-result">
           <div class="result-title" id="result-title"></div>
           <div class="result-sub" id="result-sub"></div>

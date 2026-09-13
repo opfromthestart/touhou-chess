@@ -67,29 +67,35 @@ const CONFIG = {
   // Player shot patterns, one per piece type. The protagonist assigned to the
   // piece involved in the capture fires with their signature pattern. Each
   // pattern auto-fires upward and damages the current spell card.
+  //
+  // Firepower scales with piece VALUE (the plan's "stronger piece = stronger
+  // danmaku character"): king > queen > rook > bishop ~ knight > pawn. Rough
+  // damage-per-second: k 50, q 30, r 24, b 17, n 15, p 6.7. A pawn must NOT
+  // out-damage a king — Cirno gets a single weak ice shard.
   SHOT_PATTERNS: {
-    k: { // Reimu — wide five-shot spread, a strong center stream.
-      interval: 8, count: 5, spread: 0.5, speed: 10, damage: 1, r: 3,
+    k: { // Reimu — five-shot spread, the strongest firepower.
+      interval: 6, count: 5, spread: 0.45, speed: 10, damage: 1, r: 3,
       color: '#ff5577', shape: 'circle',
     },
     q: { // Marisa — homing magic bullets (slow turn, high damage).
-      interval: 14, count: 3, spread: 0.35, speed: 7, damage: 2, r: 4,
+      interval: 12, count: 3, spread: 0.3, speed: 8, damage: 2, r: 4,
       color: '#ffaa33', shape: 'star', type: 'homing', turn: 0.05, rotSpeed: 0.15,
     },
     r: { // Sakuya / Youmu — fast, tight piercing stream.
-      interval: 4, count: 2, spread: 0.08, speed: 12, damage: 1, r: 2.5,
+      interval: 5, count: 2, spread: 0.08, speed: 12, damage: 1, r: 2.5,
       color: '#66ccff', shape: 'diamond',
     },
-    b: { // Sanae / Reisen — curving lightning bolts.
-      interval: 10, count: 3, spread: 0.25, speed: 9, damage: 1, r: 3,
-      color: '#ff88cc', shape: 'cross', type: 'curve', curve: 0.03,
+    b: { // Sanae / Reisen — straight lightning bolts. (The old curving bolts
+      // drifted off the boss within a second and were basically unusable.)
+      interval: 7, count: 2, spread: 0.1, speed: 11, damage: 1, r: 3,
+      color: '#ff88cc', shape: 'cross',
     },
-    n: { // Aya / Hatate — four-shot wing fan.
-      interval: 9, count: 4, spread: 0.7, speed: 9, damage: 1, r: 3,
+    n: { // Aya / Hatate — twin wing shots.
+      interval: 8, count: 2, spread: 0.15, speed: 10, damage: 1, r: 3,
       color: '#cc99ff', shape: 'petal', rotSpeed: 0.1,
     },
-    p: { // Cirno — wide, slow ice fan.
-      interval: 7, count: 5, spread: 0.9, speed: 8, damage: 1, r: 3,
+    p: { // Cirno — one weak ice shard; a pawn shouldn't shred spell cards.
+      interval: 9, count: 1, speed: 10, damage: 1, r: 3,
       color: '#66ddff', shape: 'diamond',
     },
   },

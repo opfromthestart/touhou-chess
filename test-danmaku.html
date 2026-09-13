@@ -39,7 +39,7 @@
   if (e2.phaseMaxHp === 100) ok('phase 0 has its own HP gauge (100)');
   else fail('phase 0 HP gauge wrong: '+e2.phaseMaxHp);
   e2.phaseHp = 0;
-  e2.update();
+  e2.update(); // one deterministic 60fps frame
   if (e2.phaseIndex === 1) ok('breaking a card advances to the next phase');
   else fail('breaking a card did not advance (phaseIndex='+e2.phaseIndex+')');
   if (e2.phaseMaxHp === 120) ok('phase 1 has its own HP gauge (120)');
@@ -83,6 +83,52 @@
   e4.update();
   if (e4.result === 'win') ok('breaking the last card ends the fight (win)');
   else fail('breaking the last card did not end the fight (result='+e4.result+')');
+
+  // --- Input: stale keys from a previous fight must not carry over. ---
+  const e5 = new DanmakuEngine(canvas, {});
+  e5.start(getPhases('rumia', 'normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+  if (!e5.keys['a']) fail('keydown was not registered');
+  e5._end('win'); // ends the fight, removes listeners, releases keys
+  if (Object.keys(e5.keys).length !== 0) fail('keys were not released when the fight ended');
+  e5.start(getPhases('rumia', 'normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k'); // next fight
+  if (Object.keys(e5.keys).length !== 0) fail('stale keys carried into the next fight');
+  ok('stale keys do not carry over between fights');
+
+  // --- Focus: hold X (slower ship + smaller hitbox); release to unfocus. ---
+  const e6 = new DanmakuEngine(canvas, {});
+  e6.start(getPhases('rumia', 'normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+  if (!e6.player.focus) fail('holding X did not enable focus');
+  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x' }));
+  if (e6.player.focus) fail('releasing X did not disable focus');
+  ok('focus is hold-to-focus (X down/up)');
+  // Focused ship moves at half speed (update() = exactly one 60fps frame).
+  e6.player.x = 240; e6.player.y = 580;
+  e6.player.focus = true;
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'arrowleft' }));
+  for (let i = 0; i < 30; i++) e6.update();
+  const focusedDist = Math.abs(240 - e6.player.x);
+  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'arrowleft' }));
+  e6.player.focus = false;
+  e6.player.x = 240;
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'arrowleft' })); // hold again at full speed
+  for (let i = 0; i < 30; i++) e6.update();
+  const normalDist = Math.abs(240 - e6.player.x);
+  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'arrowleft' }));
+  if (!(focusedDist > 0 && normalDist > focusedDist * 1.8))
+    fail('focus should slow the ship (focused=' + focusedDist + 'px, normal=' + normalDist + 'px / 30 frames)');
+  ok('focus slows the ship (' + focusedDist + 'px vs ' + normalDist + 'px per 30 frames)');
+  // Bullets are NOT slowed by focus.
+  e6.bullets = [makeBullet(240, 300, 0, 3)];
+  const by0 = e6.bullets[0].y;
+  e6.player.focus = true;
+  for (let i = 0; i < 60; i++) e6.update();
+  if (Math.abs(e6.bullets[0].y - by0) !== 180)
+    fail('bullets should keep full speed under focus (moved ' + (e6.bullets[0].y - by0) + 'px, expected 180)');
+  ok('bullets keep full speed while focused');
+  e5.stop();
+  e6.stop();
 
   log('ALL DANMAKU TESTS PASSED');
   resultEl.style.background = 'lime';

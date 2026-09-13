@@ -66,17 +66,28 @@ class DanmakuEngine {
 
     this._onKeyDown = (e) => this._key(e, true);
     this._onKeyUp = (e) => this._key(e, false);
+    // If the window loses focus mid-fight, release every key: otherwise a key
+    // held while the user clicked away would stay "pressed" when they return.
+    this._onBlur = () => {
+      this.keys = {};
+      if (this.player) this.player.focus = false;
+    };
   }
 
   _key(e, down) {
     const k = e.key.toLowerCase();
+    const wasDown = this.keys[k];
     this.keys[k] = down;
     // Prevent page scroll on arrows/space.
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
       e.preventDefault();
     }
-    if (down && (k === ' ' || k === 'z')) this.bomb();
-    if (down && k === 'x') this.player.focus = !this.player.focus;
+    // Bomb only on a FRESH press: holding Space fires keydown repeatedly
+    // (auto-repeat), which would drain the bomb stock.
+    if (down && !wasDown && (k === ' ' || k === 'z')) this.bomb();
+    // Focus is hold-to-focus (like the real games): while X is held the ship
+    // moves slower and the hitbox shrinks; bullets keep their normal speed.
+    if (k === 'x' && this.player) this.player.focus = down;
   }
 
   start(phases, boss, playerStats, playerPieceType, playerChar) {
@@ -102,6 +113,10 @@ class DanmakuEngine {
     };
     this.bullets = [];
     this.playerShots = [];
+    // Fresh key state for every fight: a key still held from the previous
+    // fight (e.g. released while the result overlay was up) must not carry
+    // over into this one.
+    this.keys = {};
     this.shotPattern =
       CONFIG.SHOT_PATTERNS[playerPieceType] || CONFIG.SHOT_PATTERNS.p;
     this.phaseIndex = 0;
@@ -116,6 +131,7 @@ class DanmakuEngine {
     this._startPhase(0);
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('blur', this._onBlur);
     this._last = performance.now();
     this._acc = 0;
     this._loop();
@@ -136,6 +152,7 @@ class DanmakuEngine {
     if (this._raf) cancelAnimationFrame(this._raf);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('blur', this._onBlur);
   }
 
   _loop() {
@@ -209,8 +226,11 @@ class DanmakuEngine {
     if (this.keys['arrowup'] || this.keys['w']) dy -= 1;
     if (this.keys['arrowdown'] || this.keys['s']) dy += 1;
     if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
-    p.x += dx * p.speed;
-    p.y += dy * p.speed;
+    // Focus (holding X) slows the ship to half speed in exchange for the
+    // smaller hitbox — the bullets are NOT slowed.
+    const spd = p.speed * (p.focus ? 0.5 : 1);
+    p.x += dx * spd;
+    p.y += dy * spd;
     p.x = Math.max(10, Math.min(this.W - 10, p.x));
     p.y = Math.max(10, Math.min(this.H - 10, p.y));
   }
@@ -332,8 +352,7 @@ class DanmakuEngine {
 
   _updateBullets() {
     const p = this.player;
-    // Focus slows bullet movement to 40% (player moves at normal speed).
-    const slow = p.focus ? 0.4 : 1;
+    // Bullets always move at full speed — focus slows the PLAYER, not them.
     for (const b of this.bullets) {
       if (!b.active) continue;
       if (b.type === 'homing' && p.alive) {
@@ -355,9 +374,9 @@ class DanmakuEngine {
         b.vx = Math.cos(newCur) * spd;
         b.vy = Math.sin(newCur) * spd;
       }
-      if (b.rotSpeed) b.rot += b.rotSpeed * slow;
-      b.x += b.vx * slow;
-      b.y += b.vy * slow;
+      if (b.rotSpeed) b.rot += b.rotSpeed;
+      b.x += b.vx;
+      b.y += b.vy;
       b.life--;
       if (b.life <= 0 || b.x < -20 || b.x > this.W + 20 || b.y < -20 || b.y > this.H + 20) {
         b.active = false;
@@ -511,9 +530,13 @@ class DanmakuEngine {
     if (this.result) return;
     this.result = result;
     this.running = false;
+    // Release any held keys so they can't carry into the next fight.
+    this.keys = {};
+    if (this.player) this.player.focus = false;
     sfxPlay(result === 'win' ? 'win' : 'lose');
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('blur', this._onBlur);
     this.onEnd(result);
   }
 

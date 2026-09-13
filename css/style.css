@@ -415,6 +415,14 @@ button:active { transform: translateY(1px); }
   border-radius: 4px;
   overflow: hidden;
 }
+
+.fight-hints {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
 .bomb-gauge-fill {
   height: 100%;
   width: 0%;
