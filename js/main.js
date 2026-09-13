@@ -404,6 +404,7 @@
       fight.modal.classList.add('hidden');
       inFight = false;
     }
+    if (practice) practice.close(); // don't leave the menu over a fresh board
     const goModal = document.getElementById('game-over-modal');
     if (goModal) goModal.classList.add('hidden');
     board.reset();
@@ -457,6 +458,44 @@
     renderSound();
   }
 
+  // ---- Practice mode: fight any boss as any piece, either difficulty.
+  // Pure training — no board changes, no capture resolution, no fight stats,
+  // no survival-model adaptation. Guarded so pages without the module
+  // (older test pages) keep working.
+  let practice = null;
+  if (typeof PracticeUI !== 'undefined' && PracticeUI) {
+    practice = new PracticeUI();
+    const btnPractice = document.getElementById('btn-practice');
+    if (btnPractice) btnPractice.addEventListener('click', () => {
+      // Never interrupt a live fight or an in-flight AI turn.
+      if (inFight || aiThinking) return;
+      practice.open();
+    });
+    practice.onSelect = ({ bossId, difficulty, playerPieceType, playerChar }) => {
+      practice.close();
+      inFight = true;
+      ui.setTurnIndicator('Practice fight!');
+      fight.startFight(bossId, difficulty, playerPieceType, playerChar, () => {
+        inFight = false;
+        // No board effects at all — just hand the menu back for another fight.
+        refreshTurnIndicator();
+        practice.open();
+      }, true);
+    };
+  }
+
+  // Restore the correct turn indicator after something (e.g. a practice
+  // fight) ended without moving a piece.
+  function refreshTurnIndicator() {
+    if (board.gameOver) {
+      ui.setTurnIndicator('Game over');
+    } else if (board.turn === 'black') {
+      ui.setTurnIndicator('Bosses (Black) are thinking…');
+    } else {
+      ui.setTurnIndicator('Your move (Protagonists)');
+    }
+  }
+
   // How to play.
   const howTo = document.getElementById('how-to-modal');
   document.getElementById('btn-how-to').addEventListener('click', () => {
@@ -489,6 +528,7 @@
       ui,
       fight,
       undo,
+      practice, // null on pages without the practice module
     };
   }
 

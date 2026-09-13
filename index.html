@@ -17,6 +17,7 @@
       <div id="controls">
         <button id="btn-new-game">New Game</button>
         <button id="btn-undo">Undo</button>
+        <button id="btn-practice" title="Practice Mode: fight any boss as any piece, either difficulty">Practice</button>
         <button id="btn-how-to">How to Play</button>
         <button id="btn-export-log" title="Download this game as a JSON log for offline replay/debugging">Export Log</button>
         <label class="ai-strength-label" for="ai-strength">AI</label>
@@ -62,6 +63,8 @@
         <li><strong>Boss fights:</strong> arrows/WASD to move, Space/Z to bomb,
             <em>hold</em> X to focus (slower movement, smaller hitbox). Your firepower scales
             with the piece's value — a Cirno pawn fires weakly, a Reimu king rips through cards.</li>
+        <li><strong>Practice Mode:</strong> the "Practice" button opens a menu to fight any boss as
+            any piece on either difficulty — no board, no stakes. Great for learning a character.</li>
       </ul>
       <button id="btn-close-how-to">Close</button>
     </div>
@@ -86,6 +89,7 @@
   <script src="js/danmaku/bosses.js"></script>
   <script src="js/ui/board-ui.js"></script>
   <script src="js/ui/fight-ui.js"></script>
+  <script src="js/ui/practice-ui.js"></script>
   <script src="js/debug/log.js"></script>
   <script src="js/debug/replay.js"></script>
   <script src="js/main.js"></script>

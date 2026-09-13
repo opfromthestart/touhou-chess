@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Practice Mode Test</title>
+<link rel="stylesheet" href="css/style.css"></head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <h1>Touhou Chess</h1>
+    <div id="status"><span id="turn-indicator"></span><span id="game-over-banner"></span></div>
+    <div id="controls">
+      <button id="btn-new-game"></button>
+      <button id="btn-undo"></button>
+      <button id="btn-practice"></button>
+      <button id="btn-how-to"></button>
+      <button id="btn-export-log"></button>
+      <label class="ai-strength-label" for="ai-strength">AI</label>
+      <select id="ai-strength">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+      </select>
+      <button id="btn-sound">🔊 Sound</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="captured-tray-black" class="captured-tray"></div>
+    <div id="board-wrap"><div id="board"></div>
+      <div id="promotion-picker" class="hidden"><div class="promo-title"></div><div class="promo-choices"></div></div>
+    </div>
+    <div id="captured-tray-white" class="captured-tray"></div>
+  </main>
+  <div id="log-panel"><h2>Log</h2><ul id="move-log"></ul></div>
+</div>
+<div id="how-to-modal" class="modal hidden"><div class="modal-content"><h2>How</h2><button id="btn-close-how-to"></button></div></div>
+<div id="test-result" style="position:fixed;top:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre;max-width:60vw"></div>
+
+<script src="js/config.js"></script>
+<script src="js/art/characters.js"></script>
+<script src="js/chess/board.js"></script>
+<script src="js/chess/ai.js"></script>
+<script src="js/audio/sfx.js"></script>
+<script src="js/danmaku/engine.js"></script>
+<script src="js/danmaku/bosses.js"></script>
+<script src="js/ui/board-ui.js"></script>
+<script src="js/ui/fight-ui.js"></script>
+<script src="js/ui/practice-ui.js"></script>
+<script src="js/debug/log.js"></script>
+<script src="js/debug/replay.js"></script>
+<script src="js/main.js"></script>
+<script>
+// End-to-end test of Practice Mode through the REAL game code: the Practice
+// menu, FightUI, the engine, and the main.js state machine. Practice fights
+// must NOT touch the board, the captured trays, the fight log, the fight
+// stats, or the AI survival model.
+(function () {
+  const out = [];
+  const el = document.getElementById('test-result');
+  function log(m) { out.push(m); el.textContent = out.join('\n'); }
+  function fail(m) { log('FAIL: ' + m); el.style.background = 'red'; throw new Error(m); }
+  function ok(m) { log('PASS: ' + m); }
+  function sq(r, c) { return document.querySelector(`#board .square[data-row="${r}"][data-col="${c}"]`); }
+  function click(r, c) { sq(r, c).dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+  const TC = window.__TC;
+  const practiceModal = () => document.getElementById('practice-modal');
+  const fightOpen = () => !document.getElementById('fight-modal').classList.contains('hidden');
+  const practiceOpen = () => !practiceModal().classList.contains('hidden');
+
+  const whiteChars = [], blackChars = [];
+  for (const t of Object.keys(CONFIG.ROSTER)) {
+    whiteChars.push(...CONFIG.ROSTER[t].you);
+    blackChars.push(...CONFIG.ROSTER[t].ai);
+  }
+
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        // --- Menu structure. ---
+        if (!TC.practice) fail('window.__TC.practice is missing');
+        if (!document.getElementById('btn-practice')) fail('#btn-practice button missing');
+        if (!practiceModal()) fail('#practice-modal missing');
+        if (practiceOpen()) fail('practice modal should start hidden');
+        ok('practice menu exists and starts hidden');
+
+        document.getElementById('btn-practice').click();
+        if (!practiceOpen()) fail('clicking Practice did not open the menu');
+        ok('Practice button opens the menu');
+
+        const playerBtns = [...practiceModal().querySelectorAll('#practice-player-grid .practice-char')];
+        const bossBtns = [...practiceModal().querySelectorAll('#practice-boss-grid .practice-char')];
+        const pChars = playerBtns.map(b => b.dataset.char).sort();
+        const bChars = bossBtns.map(b => b.dataset.char).sort();
+        if (pChars.length !== 9 || JSON.stringify(pChars) !== JSON.stringify(whiteChars.sort()))
+          fail('player grid does not list all 9 protagonists (got ' + pChars.join(',') + ')');
+        ok('player grid lists all 9 protagonists');
+        if (bChars.length !== 9 || JSON.stringify(bChars) !== JSON.stringify(blackChars.sort()))
+          fail('boss grid does not list all 9 bosses (got ' + bChars.join(',') + ')');
+        ok('boss grid lists all 9 bosses');
+
+        // Defaults: Reimu (king) vs Rumia, Normal.
+        if (TC.practice.playerChar !== 'reimu' || TC.practice.bossId !== 'rumia' || TC.practice.difficulty !== 'normal')
+          fail('defaults wrong: ' + JSON.stringify(TC.practice.selection()));
+        ok('defaults: Reimu vs Rumia on Normal');
+
+        // --- Select Marisa (queen) vs Kaguya on Lunatic. ---
+        playerBtns.find(b => b.dataset.char === 'marisa').click();
+        bossBtns.find(b => b.dataset.char === 'kaguya').click();
+        practiceModal().querySelector('#practice-diff-lunatic').click();
+        const sel = TC.practice.selection();
+        if (sel.playerChar !== 'marisa' || sel.bossId !== 'kaguya' ||
+            sel.difficulty !== 'lunatic' || sel.playerPieceType !== 'q')
+          fail('selection not updated: ' + JSON.stringify(sel));
+        ok('selection updates (Marisa/q vs Kaguya, Lunatic)');
+        const loadout = practiceModal().querySelector('#practice-loadout').textContent;
+        if (!/Marisa/.test(loadout) || !/Kaguya/.test(loadout) || !/LUNATIC/.test(loadout))
+          fail('loadout line wrong: ' + loadout);
+        ok('loadout line shows character, boss, difficulty');
+
+        // --- Snapshot everything the fight must NOT change. ---
+        const b = TC.board;
+        const gridBefore = JSON.stringify(b.grid);
+        const histBefore = b.moveHistory.length;
+        const priorBefore = survivalPrior('kaguya', 'lunatic');
+        const logLenBefore = document.querySelectorAll('#move-log li').length;
+
+        // --- Start the practice fight. ---
+        practiceModal().querySelector('#btn-practice-start').click();
+        if (practiceOpen()) fail('practice menu should close when the fight starts');
+        if (!fightOpen()) fail('Start Fight did not open the fight modal');
+        ok('Start Fight opens the danmaku fight (menu closed)');
+        const eng = TC.fight.engine;
+        // The fight header uses the short BOSSES name (e.g. "Kaguya"), not
+        // the full CONFIG.CHARACTERS name ("Kaguya Houraisan").
+        if (document.getElementById('boss-name').textContent !== BOSSES.kaguya.name)
+          fail('wrong boss in header: ' + document.getElementById('boss-name').textContent);
+        if (document.getElementById('fight-diff').textContent !== 'LUNATIC')
+          fail('difficulty not Lunatic in header');
+        ok('fight header shows Kaguya on LUNATIC');
+        if (eng.playerChar !== 'marisa') fail('engine ship is not Marisa (got ' + eng.playerChar + ')');
+        if (eng.shotPattern.count !== CONFIG.SHOT_PATTERNS.q.count || eng.shotPattern.type !== 'homing')
+          fail('engine does not use the queen shot pattern');
+        ok('ship uses the selected piece (Marisa, homing stars)');
+        const qStats = CONFIG.DANMAKU_STATS.q;
+        if (eng.player.lives !== qStats.lives || eng.player.bombs !== qStats.bombs)
+          fail('danmaku stats do not match the queen (' + eng.player.lives + '/' + eng.player.bombs + ')');
+        ok('danmaku stats match the selected piece type (queen)');
+        if (document.getElementById('turn-indicator').textContent !== 'Practice fight!')
+          fail('turn indicator should say Practice fight!');
+        ok('turn indicator shows Practice fight!');
+
+        // --- Win it; the result text must not mention captures. ---
+        eng._end('win');
+        setTimeout(() => {
+          try {
+            const sub = document.getElementById('result-sub').textContent;
+            if (document.getElementById('fight-result').classList.contains('hidden'))
+              fail('result overlay not shown');
+            if (/capture/i.test(sub)) fail('practice result text mentions captures: ' + sub);
+            ok('practice result text has no capture stakes');
+            document.getElementById('btn-fight-continue').click();
+            setTimeout(() => {
+              try {
+                // --- Nothing may have changed. ---
+                if (JSON.stringify(b.grid) !== gridBefore) fail('practice fight changed the board');
+                ok('board unchanged after practice fight');
+                if (b.moveHistory.length !== histBefore) fail('practice fight added moves to history');
+                if (TC.captured.length !== 0) fail('practice fight added captured pieces');
+                if (document.querySelectorAll('#move-log li').length !== logLenBefore)
+                  fail('practice fight wrote to the fight log');
+                ok('no moves, captures, or log entries from practice');
+                if (survivalPrior('kaguya', 'lunatic') !== priorBefore)
+                  fail('practice fight adapted the AI survival model');
+                ok('AI survival model untouched by practice');
+                if (!practiceOpen()) fail('practice menu did not reopen after the fight');
+                if (fightOpen()) fail('fight modal should be hidden after Continue');
+                ok('back at the practice menu after Continue');
+                const turn = document.getElementById('turn-indicator').textContent;
+                if (!/Your move/.test(turn)) fail('turn indicator not restored (got ' + turn + ')');
+                ok('turn indicator restored to the real game state');
+
+                // --- Guard: Practice must not open mid real-fight. ---
+                TC.practice.close(); // it auto-reopened after the practice fight
+                b.reset();
+                b.grid[4][4] = { type: 'p', color: 'white', character: 'cirno', hasMoved: true };
+                b.grid[3][3] = { type: 'n', color: 'black', character: 'nitori', hasMoved: true };
+                b.turn = 'white';
+                TC.ui.render(b);
+                click(4, 4);
+                click(3, 3); // capture -> real Normal fight vs Nitori
+                if (!fightOpen()) fail('real capture fight did not open');
+                document.getElementById('btn-practice').click();
+                if (practiceOpen()) fail('Practice opened DURING a live real fight');
+                ok('Practice is blocked while a real fight is live');
+                TC.fight.engine._end('win');
+                setTimeout(() => {
+                  try {
+                    document.getElementById('btn-fight-continue').click();
+                    setTimeout(() => {
+                      try {
+                        // Capture applied, AI replied, back to the player.
+                        if (!b.grid[3][3] || b.grid[3][3].color !== 'white')
+                          fail('real fight did not resolve (d6: ' + JSON.stringify(b.grid[3][3]) + ')');
+                        document.getElementById('btn-practice').click();
+                        if (!practiceOpen()) fail('Practice should work again after the real fight ends');
+                        ok('Practice works again once the real fight is over');
+                        log('ALL PRACTICE MODE TESTS PASSED');
+                        el.style.background = 'lime';
+                      } catch (e) { fail(e.message); }
+                    }, 900);
+                  } catch (e) { fail(e.message); }
+                }, 80);
+              } catch (e) { fail(e.message); }
+            }, 80);
+          } catch (e) { fail(e.message); }
+        }, 80);
+      } catch (e) { fail(e.message); }
+    }, 300);
+  });
+})();
+</script>
+</body>
+</html>

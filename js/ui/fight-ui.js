@@ -63,9 +63,11 @@ class FightUI {
   // Start a fight. bossId: the AI boss character. difficulty: 'normal'|'lunatic'.
   // playerPieceType: the player piece involved (drives danmaku stats + ship color).
   // playerChar: the protagonist character actually fighting (drives the ship
-  // sprite — e.g. 'sakuya' vs 'youmu' for rooks).
-  startFight(bossId, difficulty, playerPieceType, playerChar, onResult) {
+  // sprite — e.g. 'sakuya' vs 'youmu' for rooks). practiceMode: true for
+  // Practice Mode fights (no board stakes; the result text says so).
+  startFight(bossId, difficulty, playerPieceType, playerChar, onResult, practiceMode) {
     this._onResult = onResult;
+    this._practiceMode = !!practiceMode;
     this._result = null;
     const boss = BOSSES[bossId];
     const phases = getPhases(bossId, difficulty);
@@ -138,8 +140,12 @@ class FightUI {
     this.resultEl.querySelector('#result-title').textContent = won ? 'FIGHT WON' : 'FIGHT LOST';
     this.resultEl.querySelector('#result-title').className = 'result-title ' + (won ? 'win' : 'lose');
     this.resultEl.querySelector('#result-sub').textContent = won
-      ? 'You survived the boss. The capture goes through!'
-      : 'You were overwhelmed. Your piece is captured.';
+      ? (this._practiceMode
+        ? 'You survived the boss! Back to the practice menu.'
+        : 'You survived the boss. The capture goes through!')
+      : (this._practiceMode
+        ? 'You were overwhelmed. Back to the practice menu.'
+        : 'You were overwhelmed. Your piece is captured.');
     this.resultEl.classList.remove('hidden');
   }
 }

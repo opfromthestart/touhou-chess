@@ -316,6 +316,66 @@ button:active { transform: translateY(1px); }
 .modal-content ul { padding-left: 20px; }
 .modal-content li { margin: 6px 0; line-height: 1.4; }
 
+/* Practice mode */
+.practice-content { max-width: 660px; }
+.practice-sub { color: var(--text-dim); margin: 4px 0 14px; line-height: 1.4; }
+.practice-section { margin: 14px 0; }
+.practice-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--accent-2);
+  margin-bottom: 8px;
+}
+.practice-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.practice-char {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 92px;
+  padding: 8px 6px;
+  background: #1c1728;
+  border: 2px solid #3a3352;
+  border-radius: 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.practice-char:hover { border-color: #6a5f92; }
+.practice-char.selected {
+  border-color: var(--accent);
+  background: #2a2140;
+  box-shadow: 0 0 10px rgba(232, 93, 117, 0.35);
+}
+.practice-char canvas { width: 52px; height: 52px; }
+.practice-char .char-name { font-size: 11px; line-height: 1.2; text-align: center; }
+.practice-char .char-type { font-size: 10px; color: var(--text-dim); }
+.practice-diff { display: flex; gap: 8px; }
+.practice-diff-btn {
+  padding: 8px 22px;
+  background: #1c1728;
+  border: 2px solid #3a3352;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+}
+.practice-diff-btn:hover { border-color: #6a5f92; }
+.practice-diff-btn.selected {
+  border-color: var(--accent-2);
+  background: #2e2740;
+  box-shadow: 0 0 10px rgba(245, 197, 66, 0.3);
+}
+.practice-loadout {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 14px 0;
+  min-height: 18px;
+}
+.practice-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
 /* Boss-fight modal */
 #fight-modal .fight-panel {
   position: relative;
