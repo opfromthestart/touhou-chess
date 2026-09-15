@@ -5,6 +5,33 @@
 
 const TAU = Math.PI * 2;
 
+// ── Deterministic randomness ────────────────────────────────────────────────
+// All randomness inside the danmaku engine goes through a seeded PRNG
+// (mulberry32), re-seeded at the start of every fight from a stable hash of
+// the fight's identity. No Math.random anywhere in here: the same fight,
+// fought again, produces the exact same bullet field — which makes replays,
+// the AI's survival-model learning, and PVP fairness reproducible.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Small string hash (FNV-1a) -> uint32, used to derive a per-fight seed.
+function hashStr(s) {
+  let h = 0x811C9DC5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 // Play a sound effect if the SFX module is loaded (it no-ops when disabled or
 // unavailable — e.g. in Node tests).
 function sfxPlay(name) {
@@ -12,19 +39,92 @@ function sfxPlay(name) {
 }
 
 // Bullet pool.
+//
+// A bullet is a small, data-driven object. Beyond position/velocity it carries
+// an optional MOTION SCRIPT (staged trajectories like "fan out -> stop -> aim"),
+// a freeze countdown (spawn frozen, then release), gravity, a banking turn
+// (constant arc), rainbow cycling, a motion trail, a spawn timer (large bullets
+// that emit children), and destructibility (player shots can destroy it).
+// Every field is optional; plain bullets only set the basics.
 function makeBullet(x, y, vx, vy, opts = {}) {
   return {
     x, y, vx, vy,
     r: opts.r || 4,
     color: opts.color || '#ff5555',
     coreColor: opts.coreColor || null,
-    shape: opts.shape || 'circle', // circle | star | petal | cross | diamond
+    shape: opts.shape || 'circle', // circle | star | petal | cross | diamond | rice
     type: opts.type || 'normal', // normal | homing | curve | laser
     life: opts.life !== undefined ? opts.life : 600, // frames
-    turn: opts.turn || 0, // homing turn rate
-    curve: opts.curve || 0, // curve acceleration
+    turn: opts.turn || 0, // homing turn rate OR constant banking (rad/frame)
+    curve: opts.curve || 0, // curve acceleration (type==='curve')
     rot: opts.rot || 0, // current rotation (rad)
     rotSpeed: opts.rotSpeed || 0, // rotation per frame
+    // Curve-bullet (expanding spiral) state: the spiral center (cx, cy),
+    // current bearing (sa) and radius (sr), and radius growth rate (cspeed,
+    // px/frame). Only used when type === 'curve'.
+    cx: opts.cx !== undefined ? opts.cx : 0,
+    cy: opts.cy !== undefined ? opts.cy : 0,
+    sa: opts.sa || 0,
+    sr: opts.sr || 0,
+    cspeed: opts.cspeed || 0,
+    // --- New capabilities (all optional) -----------------------------------
+    // Frames the bullet stays put at its spawn point before it starts moving.
+    // On release it may adopt a new direction/speed (releaseAngle/releaseSpeed)
+    // — e.g. rings that "turn perpendicular" after a beat of stillness.
+    freeze: opts.freeze || 0,
+    releaseAngle: opts.releaseAngle, // rad; undefined = keep current velocity
+    releaseSpeed: opts.releaseSpeed, // px/frame; undefined = keep current speed
+    // Downward acceleration (px/frame^2) added to vy each frame (icicle fall).
+    gravity: opts.gravity || 0,
+    // ── General physics mode (mirrors Taisei's MoveParams integrator) ──
+    // When ANY of these is set, the bullet integrates like Taisei does:
+    //   pos += vel;  vel = accel + retention*vel;  vel += attraction*(point-pos)^exp
+    // This single model subsumes move_linear / move_accelerated /
+    // move_asymptotic(_simple/_halflife) / move_towards(_exp) / move_dampen /
+    // move_stop, so any Taisei spell translates directly.
+    accelX: opts.accelX || 0,          // constant acceleration x (px/frame^2)
+    accelY: opts.accelY || 0,          // constant acceleration y
+    retention: opts.retention || 1,    // vel *= retention each frame (<1 damp, >1 grow)
+    attraction: opts.attraction || 0,  // spring pull strength toward attractPoint
+    attractPoint: opts.attractPoint || null, // 'player' | 'boss' | {x,y} | [x,y]
+    attractExp: opts.attractExp !== undefined ? opts.attractExp : 1, // distance exponent
+    // Oscillating speed factor on top of the base velocity (Walachia-style
+    // modulated movers): effective speed = speed * (speedOscBase + speedOscAmp*sin(f*t)).
+    speedOscAmp: opts.speedOscAmp || 0,
+    speedOscFreq: opts.speedOscFreq || 0,
+    speedOscBase: opts.speedOscBase !== undefined ? opts.speedOscBase : 1,
+    oscT: 0,
+    // Fade in/out over the bullet's life (pdraw_timeout_scalefade equivalent).
+    fadeIn: opts.fadeIn || 0,          // frames to ramp opacity 0->1
+    fadeOut: opts.fadeOut || 0,        // frames to ramp opacity 1->0 at end of life
+    opacity: 1,
+    trail: !!opts.trail,               // motion trail (comet tail) behind the bullet
+    // Destructible: player shots can damage/remove it. hp defaults to 3.
+    destructible: !!opts.destructible,
+    hp: opts.hp !== undefined ? opts.hp : (opts.destructible ? 3 : 0),
+    maxHp: opts.maxHp !== undefined ? opts.maxHp : (opts.destructible ? (opts.hp !== undefined ? opts.hp : 3) : 0),
+    // Spawn children: every `spawnEvery` frames fire `spawnEmits` from this
+    // bullet's position (large hazards that shed smaller bullets / shooters).
+    // `spawnCount` caps the number of spawn bursts (0 = unlimited); `inheritVel`
+    // adds the parent's velocity to each child (moving shooters).
+    spawnEvery: opts.spawnEvery || 0,
+    spawnEmits: opts.spawnEmits || null,
+    spawnCount: opts.spawnCount || 0,
+    inheritVel: !!opts.inheritVel,
+    spawnT: 0,
+    spawnN: 0,
+    deathBurst: opts.deathBurst || null, // emitter fired when destroyed
+    // Staged trajectory: an ordered list of motion segments, each
+    // {dur (frames), mode, ...}. Modes: fly | hold | aim | homing | spin |
+    // gravity. The bullet walks through them over its life (fan -> stop -> aim).
+    script: opts.script || null,
+    scriptIndex: 0,
+    scriptT: 0,
+    age: 0, // frames alive (drives fade in/out)
+    // Remove once this far from the SPAWN point (Taisei max_viewport_dist).
+    maxDist: opts.maxDist || 0,
+    sx: x,
+    sy: y,
     grazed: false,
     active: true,
   };
@@ -58,11 +158,24 @@ class DanmakuEngine {
     this.graze = 0;
     this.bombGauge = 0;
     this.shake = 0;
+    this.fieldFreeze = null; // active field-freeze window (or null)
+    this._rng = mulberry32(0x9e3779b9); // re-seeded per fight in start()
     this.keys = {};
     this._raf = null;
     this._last = 0;
     this._acc = 0;
     this.step = 1000 / 60; // fixed timestep (ms)
+    // ── External (remote) input support ────────────────────────────────────
+    // When `externalInput` is true the engine does NOT bind window keyboard
+    // listeners; instead a caller feeds it a compact input state each frame via
+    // applyRemoteInput(). This lets a client run a *spectator* copy of the
+    // opponent's danmaku fight (driven by the opponent's synced input) while
+    // also running its own locally-controlled fight — both at once, for the
+    // multiplayer "see both screens" view.
+    this.externalInput = false;
+    // Monotonic count of bomb presses (the *intent* to bomb), used to relay
+    // bomb edge-events across the network without dropping quick taps.
+    this.bombSeq = 0;
 
     this._onKeyDown = (e) => this._key(e, true);
     this._onKeyUp = (e) => this._key(e, false);
@@ -82,12 +195,50 @@ class DanmakuEngine {
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
       e.preventDefault();
     }
-    // Bomb only on a FRESH press: holding Space fires keydown repeatedly
+    // Bomb only on a FRESH press: holding the key fires keydown repeatedly
     // (auto-repeat), which would drain the bomb stock.
-    if (down && !wasDown && (k === ' ' || k === 'z')) this.bomb();
-    // Focus is hold-to-focus (like the real games): while X is held the ship
-    // moves slower and the hitbox shrinks; bullets keep their normal speed.
-    if (k === 'x' && this.player) this.player.focus = down;
+    if (down && !wasDown && (k === ' ' || k === 'x')) {
+      this.bombSeq++; // relay the intent to any remote spectator
+      this.bomb();
+    }
+    // Focus is hold-to-focus (like the real games): while Shift is held the
+    // ship moves slower and the hitbox shrinks; bullets keep their normal speed.
+    if (k === 'shift' && this.player) this.player.focus = down;
+  }
+
+  // ── External input (multiplayer) ─────────────────────────────────────────
+  // The current compact input state, for sending to the opponent so they can
+  // run a live spectator copy of THIS fight. `bombSeq` carries the bomb
+  // edge-events (see applyRemoteInput).
+  getInputState() {
+    const k = this.keys;
+    return {
+      up: !!(k['arrowup'] || k['w']),
+      down: !!(k['arrowdown'] || k['s']),
+      left: !!(k['arrowleft'] || k['a']),
+      right: !!(k['arrowright'] || k['d']),
+      focus: !!(k['shift']),
+      bombSeq: this.bombSeq,
+    };
+  }
+
+  // Feed a remote input state into this (spectator) engine. `state` is the
+  // shape returned by getInputState(). Movement + focus are applied as levels;
+  // a bomb is fired when the remote bombSeq advances past ours (edge-detected,
+  // so quick taps aren't dropped even across a laggy link).
+  applyRemoteInput(state) {
+    if (!state) return;
+    const k = this.keys;
+    k['arrowup'] = !!state.up;     k['w'] = !!state.up;
+    k['arrowdown'] = !!state.down; k['s'] = !!state.down;
+    k['arrowleft'] = !!state.left; k['a'] = !!state.left;
+    k['arrowright'] = !!state.right; k['d'] = !!state.right;
+    k['shift'] = !!state.focus;
+    if (this.player) this.player.focus = !!state.focus;
+    if (typeof state.bombSeq === 'number' && state.bombSeq > this.bombSeq) {
+      this.bombSeq = state.bombSeq;
+      this.bomb();
+    }
   }
 
   start(phases, boss, playerStats, playerPieceType, playerChar) {
@@ -113,10 +264,26 @@ class DanmakuEngine {
     };
     this.bullets = [];
     this.playerShots = [];
+    this.fieldFreeze = null;
+    // Per-spell-card stats (tracked in every fight, shown in Practice Mode):
+    // total pixels the player moved, and the time-average of the distance to
+    // the closest bullet. `avgDist` is finalized when the card ends.
+    this.phaseStats = phases.map(ph => ({
+      name: ph.name,
+      moved: 0,        // px moved during this card
+      distSum: 0,      // sum of per-frame min distances to a bullet
+      distSamples: 0,  // frames where at least one bullet was on screen
+      avgDist: 0,
+    }));
+    // Deterministic per-fight randomness: same fight identity -> same bullet
+    // field, every time. (The chess/AI layer keeps its own Math.random.)
+    const seedStr = `${boss.charId || boss.name || 'boss'}|${playerPieceType}|${playerChar || ''}`;
+    this._rng = mulberry32(hashStr(seedStr));
     // Fresh key state for every fight: a key still held from the previous
     // fight (e.g. released while the result overlay was up) must not carry
     // over into this one.
     this.keys = {};
+    this.bombSeq = 0;
     this.shotPattern =
       CONFIG.SHOT_PATTERNS[playerPieceType] || CONFIG.SHOT_PATTERNS.p;
     this.phaseIndex = 0;
@@ -129,9 +296,13 @@ class DanmakuEngine {
     this.bombGauge = 0;
     this.running = true;
     this._startPhase(0);
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('blur', this._onBlur);
+    // Local fights bind the keyboard; spectator (external) fights are driven
+    // by applyRemoteInput() and must NOT react to the local player's keys.
+    if (!this.externalInput) {
+      window.addEventListener('keydown', this._onKeyDown);
+      window.addEventListener('keyup', this._onKeyUp);
+      window.addEventListener('blur', this._onBlur);
+    }
     this._last = performance.now();
     this._acc = 0;
     this._loop();
@@ -172,6 +343,7 @@ class DanmakuEngine {
   }
 
   _hud() {
+    const st = this.phaseStats ? this.phaseStats[this.phaseIndex] : null;
     return {
       lives: this.player.lives,
       bombs: this.player.bombs,
@@ -183,6 +355,11 @@ class DanmakuEngine {
       phaseName: this.phases[this.phaseIndex] ? this.phases[this.phaseIndex].name : '',
       phaseHp: this.phaseHp,
       phaseMaxHp: this.phaseMaxHp,
+      phaseTime: this.phaseTime,
+      phaseDuration: this.phases[this.phaseIndex] ? this.phases[this.phaseIndex].duration : 0,
+      // Live per-card practice stats (current spell card only).
+      phaseMoved: st ? st.moved : 0,
+      phaseAvgDist: st && st.distSamples > 0 ? st.distSum / st.distSamples : null,
     };
   }
 
@@ -195,14 +372,18 @@ class DanmakuEngine {
     this._updatePlayer();
     this._updateBoss();
     this._emitPattern();
+    this._updateFieldFreeze();
     this._updateBullets();
     this._updateShots();
+    this._updateBeams();
     this._checkCollisions();
+    this._sampleProximity();
 
     // Phase progression: a spell card ends when its time elapses (timeout) or
     // its HP gauge is broken (depleted by player shots). Either way we advance.
     const phase = this.phases[this.phaseIndex];
     if (phase && (this.phaseTime >= phase.duration || this.phaseHp <= 0)) {
+      this._finalizePhase(this.phaseIndex);
       this.phaseIndex++;
       this.phaseTime = 0;
       if (this.phaseIndex >= this.phases.length) {
@@ -229,19 +410,85 @@ class DanmakuEngine {
     // Focus (holding X) slows the ship to half speed in exchange for the
     // smaller hitbox — the bullets are NOT slowed.
     const spd = p.speed * (p.focus ? 0.5 : 1);
+    const px0 = p.x, py0 = p.y;
     p.x += dx * spd;
     p.y += dy * spd;
     p.x = Math.max(10, Math.min(this.W - 10, p.x));
     p.y = Math.max(10, Math.min(this.H - 10, p.y));
+    // Practice stat: total distance moved this spell card (px). Measured
+    // AFTER the edge clamp so pressing into a wall doesn't count as motion.
+    const st = this.phaseStats ? this.phaseStats[this.phaseIndex] : null;
+    if (st) st.moved += Math.hypot(p.x - px0, p.y - py0);
+  }
+
+  // Practice stat: distance from the player to the closest active bullet,
+  // sampled once per frame. Frames with no bullets on screen are not
+  // sampled (the average is over frames where a bullet existed). Beams are
+  // not counted — this measures the bullet field only.
+  _sampleProximity() {
+    const p = this.player;
+    const st = this.phaseStats ? this.phaseStats[this.phaseIndex] : null;
+    if (!p || !p.alive || !st) return;
+    let best = Infinity;
+    for (const b of this.bullets) {
+      if (!b.active) continue;
+      const ddx = b.x - p.x, ddy = b.y - p.y;
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 < best) best = d2;
+    }
+    if (best !== Infinity) {
+      st.distSum += Math.sqrt(best);
+      st.distSamples++;
+    }
+  }
+
+  // Freeze a card's stats once it ends (timeout, HP broken, or fight end).
+  _finalizePhase(i) {
+    const st = this.phaseStats ? this.phaseStats[i] : null;
+    if (!st) return;
+    st.avgDist = st.distSamples > 0 ? st.distSum / st.distSamples : 0;
   }
 
   _updateBoss() {
-    // Boss movement: gentle sine bob (overridable per boss).
+    // Boss movement modes:
+    //  sine    — gentle horizontal bob (default)
+    //  still   — fixed at top-center
+    //  circle  — orbit around a center point (Rumia / Cirno style)
+    //  erratic — Taisei-style free roam: a damped velocity is pulled by a
+    //            spring toward a drifting target (move_from_towards +
+    //            retention), re-aimed every beat with the seeded RNG.
     const b = this.boss;
-    if (b.move === 'sine' || !b.move) {
+    if (!b.move || b.move === 'sine') {
       b.x = this.W / 2 + Math.sin(this.time * (b.moveSpeed || 0.8)) * (b.moveAmp || 60);
     } else if (b.move === 'still') {
       b.x = this.W / 2;
+    } else if (b.move === 'circle') {
+      const r = b.moveAmp || 60;
+      const w = b.moveSpeed || 0.8;
+      const cx = this.W / 2, cy = b.cy !== undefined ? b.cy : this.H * 0.22;
+      b.x = cx + Math.cos(this.time * w) * r;
+      b.y = cy + Math.sin(this.time * w) * r * (b.moveYScale || 0.4);
+    } else if (b.move === 'erratic') {
+      if (!b._mv) b._mv = { x: b.x, y: b.y, vx: 0, vy: 0, tx: b.x, ty: b.y, t: 0 };
+      const m = b._mv;
+      m.t--;
+      if (m.t <= 0) {
+        const dist = b.wanderDist || 100;
+        m.tx = Math.max(20, Math.min(this.W - 20, m.x + (this._rnd() * 2 - 1) * dist));
+        m.ty = Math.max(20, Math.min(this.H * 0.5, m.y + (this._rnd() * 2 - 1) * dist * 0.5));
+        m.t = 40 + this._rnd() * 50;
+      }
+      // Same integrator as bullets: pos += vel; vel = accel + ret*vel;
+      // vel += attraction*(target-pos).
+      m.x += m.vx; m.y += m.vy;
+      const ret = b.retention !== undefined ? b.retention : 0.9;
+      m.vx = (b.accelX || 0) + ret * m.vx;
+      m.vy = (b.accelY || 0) + ret * m.vy;
+      const att = b.attraction || 0.015;
+      m.vx += att * (m.tx - m.x);
+      m.vy += att * (m.ty - m.y);
+      b.x = Math.max(20, Math.min(this.W - 20, m.x));
+      b.y = Math.max(20, Math.min(this.H * 0.55, m.y));
     }
   }
 
@@ -256,42 +503,95 @@ class DanmakuEngine {
       if (t >= em._next) {
         this._fireEmitter(em);
         const interval = em.interval || 0.2;
-        if (em.repeat !== undefined && em.repeat !== -1) {
-          em._count = (em._count || 0) + 1;
-          if (em._count >= em.repeat) { em._done = true; continue; }
+        // Fire count is tracked for ALL emitters (finite or infinite) so
+        // patterns can evolve per shot (e.g. ring rotStep rotation).
+        em._count = (em._count || 0) + 1;
+        if (em.repeat !== undefined && em.repeat !== -1 && em._count >= em.repeat) {
+          em._done = true; continue;
         }
         em._next += interval;
       }
     }
   }
 
+  // Fire a phase emitter from the boss. Delegates to _emitAt (which fires from
+  // an arbitrary origin) so spawned sub-patterns can reuse the same logic.
   _fireEmitter(em) {
-    const b = this.boss;
+    this._emitAt(this.boss.x, this.boss.y, em);
+  }
+
+  // Fire an emitter from an arbitrary origin (ox, oy). Aim is computed toward
+  // the player from that origin. This is the single home for every emitter
+  // type, so both the boss and any spawned sub-source share the vocabulary.
+  _emitAt(ox, oy, em) {
     const p = this.player;
     const speedMul = em.speedMul || 1;
     const densityMul = em.densityMul || 1;
     const count = Math.max(1, Math.round((em.count || 1) * densityMul));
     const speed = (em.speed || 2) * speedMul;
-    const baseAngle = em.angle !== undefined ? em.angle : Math.atan2(p.y - b.y, p.x - b.x);
+    const baseAngle = em.angle !== undefined ? em.angle : Math.atan2(p.y - oy, p.x - ox);
 
     switch (em.type) {
       case 'point': {
-        this._add(b.x, b.y, baseAngle, speed, em);
+        this._add(ox, oy, baseAngle, speed, em);
         break;
       }
       case 'aimed': {
+        // NOTE: use ODD counts for aimed patterns. With an even count no
+        // bullet sits on the aim line, so the player can camp dead-center on
+        // the boss and take nothing — the pattern stops being a real threat.
+        // (Same rule for 'fan'.)
         const spread = em.spread || 0;
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0);
-          this._add(b.x, b.y, a, speed, em);
+          this._add(ox, oy, a, speed, em);
         }
         break;
       }
       case 'ring': {
-        const rot = em.rot || 0;
+        // em.rot: static offset (rad). em.rotStep: rotation added PER FIRE
+        // (rad) — makes a "rotating ring" (Taisei/Danmakufu spiral rings:
+        // each full ring is offset from the last, e.g. +6° per emission).
+        const rot = (em.rot || 0) + (em.rotStep || 0) * (em._count || 0);
         for (let i = 0; i < count; i++) {
           const a = rot + (i / count) * TAU;
-          this._add(b.x, b.y, a, speed, em);
+          const extra = {};
+          if (em.releaseTangent !== undefined) {
+            // Demarcation-style ring: fly outward, hold, then drift
+            // PERPENDICULAR to the radius (tangent), alternating direction
+            // per bullet (even index one way, odd the other).
+            extra.script = [
+              { dur: Math.round((em.flyDur !== undefined ? em.flyDur : 1) * 60), mode: 'fly' },
+              { dur: Math.round((em.holdDur !== undefined ? em.holdDur : 0.3) * 60), mode: 'hold' },
+              { dur: 999999, mode: 'tangent', speed: em.releaseSpeed || 0.8,
+                dir: (i % 2 === 0 ? 1 : -1) * (em.tangentDir || 1) },
+            ];
+          } else if (em.script) {
+            extra.script = em.script;
+          }
+          // Per-bullet color alternation (odd bullets get em.colorAlt).
+          if (em.colorAlt && i % 2 === 1) extra.color = em.colorAlt;
+          this._add(ox, oy, a, speed, em, extra);
+        }
+        break;
+      }
+      case 'ringRing': {
+        // Flower of flowers: `count` mini-rings placed on a circle of radius
+        // em.radius around the origin; each mini-ring is `em.per` bullets
+        // fired as a full ring from its own center. The classic Touhou
+        // expanding-flower pattern (Danmakufu CreateRoundShotA2 rings on a
+        // circle, e.g. SCC Rumia TPattern1). Mini-rings inherit speed/color/
+        // physics from em, so retention/accel deceleration shapes the bloom.
+        const radius = em.radius || 100;
+        const per = Math.max(1, em.per || 5);
+        const rot = (em.rot || 0) + (em.rotStep || 0) * (em._count || 0);
+        for (let c = 0; c < count; c++) {
+          const ca = rot + (c / count) * TAU;
+          const gx = ox + Math.cos(ca) * radius;
+          const gy = oy + Math.sin(ca) * radius;
+          const inner = Object.assign({}, em, { type: 'ring', count: per });
+          delete inner.radius; delete inner.per;
+          this._emitAt(gx, gy, inner);
         }
         break;
       }
@@ -300,84 +600,388 @@ class DanmakuEngine {
         const rot = (em.rotSpeed || 0.3) * this.phaseTime;
         for (let a = 0; a < arms; a++) {
           const ang = rot + (a / arms) * TAU;
-          this._add(b.x, b.y, ang, speed, em);
+          this._add(ox, oy, ang, speed, em);
         }
         break;
       }
       case 'fan': {
+        // NOTE: prefer ODD counts — see the 'aimed' note (even counts leave
+        // the aim line open). `em.script` gives every bullet a shared staged
+        // trajectory (e.g. fan out -> stop -> aim at the player).
         const spread = em.spread || 0.6;
+        const extra = em.script ? { script: em.script } : {};
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (i / (count - 1) - 0.5) * spread;
-          this._add(b.x, b.y, a, speed, em);
+          this._add(ox, oy, a, speed, em, extra);
         }
         break;
       }
       case 'homing': {
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (i - (count - 1) / 2) * 0.2;
-          this._add(b.x, b.y, a, speed, em, { type: 'homing', turn: em.turn || 0.05 });
+          this._add(ox, oy, a, speed, em, { type: 'homing', turn: em.turn || 0.05 });
         }
         break;
       }
       case 'curve': {
+        // Expanding spiral: each bullet keeps its distance from the spawn
+        // point (the origin at fire time) growing while its bearing rotates —
+        // see the 'curve' branch in _moveBullet.
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (i - (count - 1) / 2) * 0.3;
-          this._add(b.x, b.y, a, speed, em, { type: 'curve', curve: em.curve || 0.05 });
+          this._add(ox, oy, a, speed, em, {
+            type: 'curve', curve: em.curve || 0.05,
+            cx: ox, cy: oy, sa: a, sr: 0, cspeed: speed,
+          });
         }
         break;
       }
       case 'laser': {
-        // A laser is a dense line of bullets fired over several ticks.
+        // A laser is a line of bullets laid out ALONG the beam (offset from
+        // the origin), refired every `interval` so successive segments overlap
+        // into a continuous beam. `laserLen` is the beam length in px; bullets
+        // sit `spacing` px apart and live `life` frames (default 120).
         const a = baseAngle;
-        for (let i = 0; i < (em.laserLen || 6); i++) {
-          this._add(b.x, b.y, a, speed * 1.6, em, { r: em.r || 5, color: em.color || '#ff3333' });
+        const spacing = em.spacing || 8;
+        const n = Math.max(1, Math.round(((em.laserLen || 80) / spacing) * densityMul));
+        for (let i = 0; i < n; i++) {
+          const d = i * spacing;
+          this._add(
+            ox + Math.cos(a) * d, oy + Math.sin(a) * d,
+            a, speed * 1.6, em,
+            { r: em.r || 5, color: em.color || '#ff3333', life: em.life !== undefined ? em.life : 120 },
+          );
+        }
+        break;
+      }
+
+      // ── New emitter types (added for the spell-card recreation engine) ──
+
+      case 'volley': {
+        // A volley = a set of bullets fired at the SAME time in the SAME
+        // direction (aimed at the player) but each with a DIFFERENT speed, so
+        // they peel apart into a stretching line. Speeds come from em.speeds
+        // (a list, cycled) or are spread across [speedMin, speedMax].
+        const speeds = this._volleySpeeds(em, count);
+        for (let i = 0; i < count; i++) {
+          const sp = speeds[i % speeds.length] * speedMul;
+          this._add(ox, oy, baseAngle, sp, em);
+        }
+        break;
+      }
+      case 'ringFan': {
+        // `count` clusters arranged in a ring around the origin; each cluster
+        // is a small K-way fan (em.per) pointing outward. "16 3-fans" =>
+        // count=16, per=3. Cluster speeds can vary (em.speeds, cycled) so a
+        // companion ring can "ride along with the slowest fan".
+        const per = Math.max(1, em.per || 3);
+        const cSpread = em.cSpread || 0.35;
+        const ringRot = (em.rot || 0) + (em.rotStep || 0) * (em._count || 0);
+        const speeds = Array.isArray(em.speeds) && em.speeds.length ? em.speeds : null;
+        for (let c = 0; c < count; c++) {
+          const ca = ringRot + (c / count) * TAU;
+          const sp = (speeds ? speeds[c % speeds.length] : speed) * speedMul;
+          for (let k = 0; k < per; k++) {
+            const a = ca + (per > 1 ? (k / (per - 1) - 0.5) * cSpread : 0);
+            this._add(ox, oy, a, sp, em);
+          }
+        }
+        break;
+      }
+      case 'arc': {
+        // A fan where each bullet banks (curves) in a direction set by which
+        // side of the aim line it sits on, and is colored by that side. Makes
+        // flocks that scatter outward like birds (Night Bird): left side one
+        // way/color, right side the other. With an EVEN count no bullet lands
+        // on the aim line; set em.center to add one extra dead-aimed bullet
+        // (colorCenter) — "each arc contains one bullet aimed directly at
+        // the player".
+        const spread = em.spread || 0.8;
+        const sideTurn = em.sideTurn || 0.02;
+        for (let i = 0; i < count; i++) {
+          const off = count > 1 ? (i / (count - 1) - 0.5) : 0; // -0.5..0.5
+          const a = baseAngle + off * spread;
+          // Bank so the wings open OUTWARD (away from the aim line).
+          const turn = -off * (sideTurn * 2);
+          let color = em.color;
+          if (off < -0.001) color = em.colorLeft || em.color;
+          else if (off > 0.001) color = em.colorRight || em.color;
+          else color = em.colorCenter || em.color;
+          this._add(ox, oy, a, speed, em, { turn, color });
+        }
+        if (em.center) {
+          this._add(ox, oy, baseAngle, speed, em, { color: em.colorCenter || em.color });
+        }
+        break;
+      }
+      case 'wall': {
+        // A curtain of bullets laid along a line, entering from one edge and
+        // sweeping across (tidal waves, rolling curtains). em.side picks the
+        // entry edge; the curtain moves perpendicular into the screen.
+        // Optional gap: a hole the player threads — em.gapSize px wide at
+        // em.gapPos (0..1 along the span); em.gapPosStep shifts the gap per
+        // fire so each wave's opening is elsewhere (Kappa's Pororoca).
+        // em.cxn/em.cyn center the curtain at a normalized screen point
+        // (default: the boss position) so a full-height wall covers the field.
+        const spacing = em.spacing || 14;
+        const span = em.len || ((em.side === 'left' || em.side === 'right') ? this.H : this.W);
+        const n = Math.max(1, Math.round(span / spacing));
+        const cx = em.cxn !== undefined ? em.cxn * this.W : null;
+        const cy = em.cyn !== undefined ? em.cyn * this.H : null;
+        let moveA, ax, ay;
+        if (em.side === 'top') { moveA = Math.PI / 2; ax = cx !== null ? cx : ox; ay = -6; }
+        else if (em.side === 'bottom') { moveA = -Math.PI / 2; ax = cx !== null ? cx : ox; ay = this.H + 6; }
+        else if (em.side === 'left') { moveA = 0; ax = -6; ay = cy !== null ? cy : oy; }
+        else { moveA = Math.PI; ax = this.W + 6; ay = cy !== null ? cy : oy; }
+        const perp = moveA + Math.PI / 2;
+        const hasGap = em.gapSize > 0;
+        const gapBase = em.gapPos !== undefined ? em.gapPos : 0.5;
+        // Safe modulo: JS % keeps the sign, so a negative gapPosStep would
+        // otherwise drift the gap off-span.
+        const gapPos = (((gapBase + (em.gapPosStep || 0) * (em._count || 0)) % 1) + 1) % 1;
+        const gapCenter = (gapPos - 0.5) * span;
+        for (let i = 0; i < n; i++) {
+          const d = (i - (n - 1) / 2) * spacing;
+          if (hasGap && Math.abs(d - gapCenter) < em.gapSize / 2) continue;
+          this._add(ax + Math.cos(perp) * d, ay + Math.sin(perp) * d, moveA, speed, em);
+        }
+        break;
+      }
+      case 'edge': {
+        // Bullets growing inward from a screen edge (ooze, crystals, creep).
+        // Each starts just outside the edge and moves straight into the field.
+        const side = em.side || 'bottom';
+        const spacing = em.spacing || 16;
+        const horizontal = side === 'top' || side === 'bottom';
+        const span = horizontal ? this.W : this.H;
+        const n = Math.max(1, Math.round(span / spacing));
+        for (let i = 0; i < n; i++) {
+          const t = (i + 0.5) * (span / n);
+          let px, py, a;
+          if (side === 'bottom') { px = t; py = this.H + 6; a = -Math.PI / 2; }
+          else if (side === 'top') { px = t; py = -6; a = Math.PI / 2; }
+          else if (side === 'left') { px = -6; py = t; a = 0; }
+          else { px = this.W + 6; py = t; a = Math.PI; }
+          this._add(px, py, a, speed, em);
+        }
+        break;
+      }
+      case 'column': {
+        // Steady falling column(s) of bullets from the top edge at fixed x
+        // position(s) — "neat columns" trailing down either side of a beam.
+        // em.xs: absolute x positions; em.xn: normalized (0..1) positions.
+        const xs = [];
+        if (Array.isArray(em.xs)) for (const x of em.xs) xs.push(x);
+        if (Array.isArray(em.xn)) for (const xn of em.xn) xs.push(xn * this.W);
+        if (!xs.length) xs.push(ox);
+        for (const cx of xs) {
+          this._add(cx, -6, Math.PI / 2, speed, em); // straight down
+        }
+        break;
+      }
+      case 'gap': {
+        // Emit a burst from an arbitrary point on screen (Yukari's gaps).
+        // Position via em.x/em.y (px) or em.xn/em.yn (normalized 0..1); the
+        // burst itself is em.inner (default 'ring'), fired from that point.
+        const gx = em.xn !== undefined ? em.xn * this.W : (em.x !== undefined ? em.x : ox);
+        const gy = em.yn !== undefined ? em.yn * this.H : (em.y !== undefined ? em.y : oy);
+        const inner = Object.assign({}, em);
+        delete inner.x; delete inner.y; delete inner.xn; delete inner.yn;
+        inner.type = em.inner || 'ring';
+        this._emitAt(gx, gy, inner);
+        break;
+      }
+      case 'splash': {
+        // A burst from a RANDOM (seeded) position within a region, on every
+        // fire — water drips, splashes, foam, and "emergence from nowhere"
+        // (Optical/Hydro Camouflage: you can't tell where it came from).
+        // Region via xn0/xn1/yn0/yn1 (normalized 0..1) or x0/x1/y0/y1 (px).
+        // The burst itself is em.inner (default 'ring'), fired from that point.
+        const x0 = em.xn0 !== undefined ? em.xn0 * this.W : (em.x0 !== undefined ? em.x0 : 0);
+        const x1 = em.xn1 !== undefined ? em.xn1 * this.W : (em.x1 !== undefined ? em.x1 : this.W);
+        const y0 = em.yn0 !== undefined ? em.yn0 * this.H : (em.y0 !== undefined ? em.y0 : 0);
+        const y1 = em.yn1 !== undefined ? em.yn1 * this.H : (em.y1 !== undefined ? em.y1 : this.H);
+        const sx = this._rndRange(x0, x1);
+        const sy = this._rndRange(y0, y1);
+        const inner = Object.assign({}, em);
+        delete inner.xn0; delete inner.xn1; delete inner.yn0; delete inner.yn1;
+        delete inner.x0; delete inner.x1; delete inner.y0; delete inner.y1;
+        inner.type = em.inner || 'ring';
+        this._emitAt(sx, sy, inner);
+        break;
+      }
+      case 'spawnBullet': {
+        // Fire a large hazard bullet that can shed children (spawnEmits every
+        // spawnEvery frames) and/or be destroyed by player shots.
+        for (let i = 0; i < count; i++) {
+          const a = baseAngle + (count > 1 ? (i / (count - 1) - 0.5) * (em.spread || 0.3) : 0);
+          this._add(ox, oy, a, speed, em, {
+            destructible: true,
+            hp: em.hp || 3,
+            r: em.r || 10,
+            spawnEvery: em.spawnEvery || 0,
+            spawnEmits: em.spawnEmits || null,
+            deathBurst: em.deathBurst || null,
+          });
+        }
+        break;
+      }
+      case 'doll': {
+        // A destructible shooter entity (Alice's dolls): a big bullet that
+        // flies, fires its own pattern repeatedly (em.shoot), and can be shot
+        // down to stop it.
+        const shoot = em.shoot || { type: 'aimed', count: 3, spread: 0.6, speed: 2.5 };
+        const intervalFrames = Math.max(1, Math.round((em.interval || 0.4) * 60));
+        for (let i = 0; i < count; i++) {
+          const a = baseAngle + (count > 1 ? (i / (count - 1) - 0.5) * (em.spread || 0.5) : 0);
+          this._add(ox, oy, a, speed, em, {
+            destructible: true,
+            hp: em.hp || 5,
+            r: em.r || 12,
+            shape: em.shape || 'petal',
+            spawnEvery: intervalFrames,
+            spawnEmits: [Object.assign({ interval: 0 }, shoot)],
+            deathBurst: em.deathBurst || null,
+          });
         }
         break;
       }
       default: {
-        this._add(b.x, b.y, baseAngle, speed, em);
+        this._add(ox, oy, baseAngle, speed, em);
       }
     }
   }
 
+  // Resolve the per-bullet speeds for a 'volley' emitter (same direction,
+  // different speeds). Returns a list of `count` values.
+  _volleySpeeds(em, count) {
+    if (Array.isArray(em.speeds) && em.speeds.length) return em.speeds;
+    const base = em.speed || 2;
+    const min = em.speedMin !== undefined ? em.speedMin : base * 0.6;
+    const max = em.speedMax !== undefined ? em.speedMax : base * 1.4;
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      out.push(count > 1 ? min + (i / (count - 1)) * (max - min) : (min + max) / 2);
+    }
+    return out;
+  }
+
   _add(x, y, angle, speed, em, extra = {}) {
     if (this.bullets.length > 1200) return; // cap
+    // Per-bullet seeded jitter (Taisei rng_dir / rng_range equivalents):
+    // every draw comes from this._rng, so the whole fight is deterministic.
+    angle = this._jitterAngle(em, angle);
+    speed = this._jitterSpeed(em, speed);
+    const color = this._jitterColor(em, em.color);
+    // Optional per-emitter bullet fields (Taisei MoveParams + visuals).
+    // Without this passthrough, pattern data could not express acceleration,
+    // retention, attraction, speed oscillation, max distance, fades, rainbow
+    // cycling, gravity or custom lifetimes — only the few fields listed here.
+    const phys = {};
+    for (const k of [
+      'accelX', 'accelY', 'retention', 'attraction', 'attractPoint', 'attractExp',
+      'speedOscAmp', 'speedOscFreq', 'speedOscBase', 'maxDist',
+      'fadeIn', 'fadeOut', 'rainbow', 'gravity', 'turn',
+      'freeze', 'releaseAngle', 'releaseSpeed', 'life',
+      // Hazard + visual fields: let ANY emitter create bullets that shed
+      // children (spawnEvery/spawnEmits), can be shot down (destructible/hp),
+      // burst on death (deathBurst), or leave a motion trail (trail). This is
+      // what lets water "ooze" (falling bubbles that pop) and "cucumbers"
+      // (shootable drifting hazards) work from plain edge/column/wall emits.
+      'trail', 'spawnEvery', 'spawnEmits', 'spawnCount', 'inheritVel',
+      'deathBurst', 'destructible', 'hp', 'maxHp',
+    ]) {
+      if (em[k] !== undefined) phys[k] = em[k];
+    }
     const b = makeBullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, {
-      r: em.r, color: em.color,
+      r: em.r, color,
       coreColor: em.coreColor, shape: em.shape, rotSpeed: em.rotSpeed,
+      ...phys,
       ...extra,
     });
     this.bullets.push(b);
   }
 
+  // Field freezes (Perfect-Freeze style): at a scheduled time, halt every
+  // bullet (recolor white); when the hold elapses, release them with fresh
+  // velocities. Driven by phase.freezes = [{t, hold, release:{mode,speed}}].
+  _updateFieldFreeze() {
+    const phase = this.phases[this.phaseIndex];
+    if (!phase || !phase.freezes) return;
+    for (const fz of phase.freezes) {
+      if (!fz._done && this.phaseTime >= fz.t) {
+        fz._done = true;
+        this.fieldFreeze = {
+          until: fz.t + (fz.hold !== undefined ? fz.hold : 1),
+          release: fz.release || { mode: 'random' },
+        };
+        // Recolor the whole field white while it is frozen.
+        for (const b of this.bullets) {
+          if (!b.active) continue;
+          if (!b._fc) { b._fc = b.color; b._fcc = b.coreColor; }
+          b.color = '#ffffff';
+          b.coreColor = '#ffffff';
+        }
+      }
+    }
+    if (this.fieldFreeze && this.phaseTime >= this.fieldFreeze.until) {
+      this._releaseField(this.fieldFreeze.release);
+      this.fieldFreeze = null;
+    }
+  }
+
   _updateBullets() {
     const p = this.player;
     // Bullets always move at full speed — focus slows the PLAYER, not them.
+    // A global FIELD FREEZE (Perfect-Freeze style) halts every bullet at once;
+    // while active we skip all motion and recolor the field white.
+    const frozen = !!this.fieldFreeze;
     for (const b of this.bullets) {
       if (!b.active) continue;
-      if (b.type === 'homing' && p.alive) {
-        const desired = Math.atan2(p.y - b.y, p.x - b.x);
-        let cur = Math.atan2(b.vy, b.vx);
-        let diff = desired - cur;
-        while (diff > Math.PI) diff -= TAU;
-        while (diff < -Math.PI) diff += TAU;
-        const turn = Math.max(-b.turn, Math.min(b.turn, diff));
-        const spd = Math.hypot(b.vx, b.vy);
-        cur += turn;
-        b.vx = Math.cos(cur) * spd;
-        b.vy = Math.sin(cur) * spd;
-      }
-      if (b.type === 'curve') {
-        const cur = Math.atan2(b.vy, b.vx);
-        const spd = Math.hypot(b.vx, b.vy);
-        const newCur = cur + b.curve;
-        b.vx = Math.cos(newCur) * spd;
-        b.vy = Math.sin(newCur) * spd;
-      }
+
+      // Rotation + rainbow cycling happen regardless of motion state.
       if (b.rotSpeed) b.rot += b.rotSpeed;
-      b.x += b.vx;
-      b.y += b.vy;
+      if (b.rainbow) {
+        b.hue = (b.hue + 2) % 360;
+        b.color = `hsl(${b.hue}, 90%, 62%)`;
+        b.coreColor = `hsl(${b.hue}, 90%, 88%)`;
+      }
+
+      // Large bullets that shed children (cucumbers, bubbles, shooters).
+      if (b.spawnEvery > 0 && !frozen) {
+        b.spawnT++;
+        if (b.spawnT >= b.spawnEvery) {
+          b.spawnT = 0;
+          this._fireSpawn(b);
+        }
+      }
+
+      // Per-bullet freeze (spawn still, then release — optionally re-aimed).
+      if (b.freeze > 0) {
+        b.freeze--;
+        if (b.freeze === 0 && b.releaseAngle !== undefined) {
+          const sp = b.releaseSpeed !== undefined ? b.releaseSpeed : Math.hypot(b.vx, b.vy);
+          b.vx = Math.cos(b.releaseAngle) * sp;
+          b.vy = Math.sin(b.releaseAngle) * sp;
+        }
+      } else if (!frozen) {
+        this._moveBullet(b, p);
+      }
+
       b.life--;
+      b.age++;
+      // Fade in/out over the bullet's life (pdraw_timeout_scalefade).
+      if (b.fadeIn || b.fadeOut) {
+        let op = 1;
+        if (b.fadeIn) op = Math.min(1, b.age / b.fadeIn);
+        if (b.fadeOut) op = Math.min(op, Math.max(0, b.life) / b.fadeOut);
+        b.opacity = op;
+      }
+      // Distance cap from spawn (Taisei max_viewport_dist): some spells only
+      // want their bullets to live out to a fixed radius.
+      if (b.maxDist && Math.hypot(b.x - b.sx, b.y - b.sy) > b.maxDist) {
+        b.active = false;
+      }
       if (b.life <= 0 || b.x < -20 || b.x > this.W + 20 || b.y < -20 || b.y > this.H + 20) {
         b.active = false;
       }
@@ -385,6 +989,229 @@ class DanmakuEngine {
     // Remove inactive bullets (in-place).
     if (this.bullets.some(b => !b.active)) {
       this.bullets = this.bullets.filter(b => b.active);
+    }
+  }
+
+  // Apply one frame of motion to a bullet, honoring its script / type /
+  // banking / gravity. This is the single place where a bullet's position
+  // changes, so every movement flavor funnels through here.
+  _moveBullet(b, p) {
+    // Staged trajectory: walk an ordered list of motion segments.
+    if (b.script && b.script.length) {
+      const st = b.script[b.scriptIndex];
+      if (!st) return; // script exhausted: hold position
+      if (b.scriptT === 0) this._enterStage(b, st, p);
+      switch (st.mode) {
+        case 'hold': break;            // v zeroed at entry; stay put
+        case 'aim': break;             // v set toward player at entry; fly straight
+        case 'homing': this._homingStep(b, p, st.turn || b.turn || 0.05); break;
+        case 'spin': this._bank(b, st.turn || b.turn || 0.04); break;
+        case 'gravity': b.vy += (st.gravity !== undefined ? st.gravity : (b.gravity || 0.12)); break;
+        default: break;                // 'fly': keep current velocity
+      }
+      b.x += b.vx;
+      b.y += b.vy;
+      b.scriptT++;
+      if (b.scriptT >= st.dur) { b.scriptIndex++; b.scriptT = 0; }
+      return;
+    }
+
+    // General physics mode (Taisei MoveParams equivalent): active when any of
+    // accel / retention(!=1) / attraction is set. Integrates exactly like
+    // taisei/src/move.c::move_update:
+    //   pos += vel
+    //   vel = accel + retention * vel
+    //   vel += attraction * (point - pos)          [exp == 1]
+    //   vel += attraction * (point - pos) * |d|^(exp-1)   [exp != 1]
+    // This one model covers move_linear, move_accelerated,
+    // move_asymptotic(_simple/_halflife), move_towards(_exp), move_dampen,
+    // move_stop — so any Taisei spell translates directly.
+    const hasPhysics = b.accelX || b.accelY || b.retention !== 1 || b.attraction || b.speedOscAmp;
+    if (hasPhysics) {
+      const osc = b.speedOscAmp
+        ? (b.speedOscBase + b.speedOscAmp * Math.sin(b.speedOscFreq * b.oscT))
+        : 1;
+      b.oscT++;
+      b.x += b.vx * osc;
+      b.y += b.vy * osc;
+      b.vx = b.accelX + b.retention * b.vx;
+      b.vy = b.accelY + b.retention * b.vy;
+      if (b.attraction) {
+        const pt = this._resolveAttract(b, p);
+        const ax = pt.x - b.x, ay = pt.y - b.y;
+        let mul = b.attraction;
+        if (b.attractExp !== 1) {
+          const d = Math.hypot(ax, ay);
+          if (d > 0) mul *= Math.pow(d, b.attractExp - 1);
+        }
+        b.vx += mul * ax;
+        b.vy += mul * ay;
+      }
+      return;
+    }
+
+    if (b.type === 'homing' && p.alive) {
+      this._homingStep(b, p, b.turn || 0.05);
+      b.x += b.vx;
+      b.y += b.vy;
+    } else if (b.type === 'curve') {
+      // Expanding spiral: the bearing turns by `curve` rad/frame while the
+      // radius from the spawn point grows by `cspeed` px/frame. (Rotating
+      // the velocity alone would just orbit the boss in a circle.)
+      b.sa += b.curve;
+      b.sr += b.cspeed;
+      b.x = b.cx + Math.cos(b.sa) * b.sr;
+      b.y = b.cy + Math.sin(b.sa) * b.sr;
+    } else {
+      if (b.turn) this._bank(b, b.turn);   // constant banking arc
+      if (b.gravity) b.vy += b.gravity;    // icicle / parabolic fall
+      b.x += b.vx;
+      b.y += b.vy;
+    }
+  }
+
+  // Steer a bullet toward the player by at most `turn` rad this frame.
+  _homingStep(b, p, turn) {
+    const desired = Math.atan2(p.y - b.y, p.x - b.x);
+    let cur = Math.atan2(b.vy, b.vx);
+    let diff = desired - cur;
+    while (diff > Math.PI) diff -= TAU;
+    while (diff < -Math.PI) diff += TAU;
+    const t = Math.max(-turn, Math.min(turn, diff));
+    const spd = Math.hypot(b.vx, b.vy);
+    cur += t;
+    b.vx = Math.cos(cur) * spd;
+    b.vy = Math.sin(cur) * spd;
+  }
+
+  // Rotate a bullet's velocity by a fixed `turn` rad (a banking arc).
+  _bank(b, turn) {
+    const cur = Math.atan2(b.vy, b.vx);
+    const spd = Math.hypot(b.vx, b.vy);
+    const nc = cur + turn;
+    b.vx = Math.cos(nc) * spd;
+    b.vy = Math.sin(nc) * spd;
+  }
+
+  // Enter a motion-script stage: do its one-time setup (zero v for 'hold',
+  // aim at the player for 'aim', perpendicular drift for 'tangent').
+  _enterStage(b, st, p) {
+    switch (st.mode) {
+      case 'hold':
+        b.vx = 0;
+        b.vy = 0;
+        break;
+      case 'aim': {
+        // Capture the player's position ONCE at entry (not homing).
+        const sp = st.speed !== undefined ? st.speed : (Math.hypot(b.vx, b.vy) || 2);
+        const a = Math.atan2(p.y - b.y, p.x - b.x);
+        b.vx = Math.cos(a) * sp;
+        b.vy = Math.sin(a) * sp;
+        break;
+      }
+      case 'tangent': {
+        // Drift perpendicular to the radius from the SPAWN point (the ring
+        // center). dir=+1 => left of the radial direction (-ry, rx);
+        // dir=-1 => right (ry, -rx). Used by Demarcation's rings, which
+        // "turn perpendicular" after expanding.
+        const rx = b.x - b.sx, ry = b.y - b.sy;
+        const d = Math.hypot(rx, ry) || 1;
+        const s = st.speed !== undefined ? st.speed : 1;
+        const dir = st.dir || 1;
+        b.vx = (-ry / d) * s * dir;
+        b.vy = (rx / d) * s * dir;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // Fire a large bullet's child emitters from its current position.
+  _fireSpawn(b) {
+    const emits = b.spawnEmits;
+    if (!emits) return;
+    // Cap the number of shed bursts (spawnCount > 0): after this many, the
+    // hazard keeps drifting but stops shedding (e.g. a cucumber that has
+    // spent its seeds still rolls across the field).
+    if (b.spawnCount > 0 && b.spawnN >= b.spawnCount) return;
+    b.spawnN++;
+    const before = this.bullets.length;
+    for (const em of (Array.isArray(emits) ? emits : [emits])) {
+      this._emitAt(b.x, b.y, em);
+    }
+    // Children inherit the parent's drift (moving shooters): the shed bullets
+    // keep the hazard's own velocity, so a drifting cucumber carries its spray.
+    if (b.inheritVel) {
+      for (let i = before; i < this.bullets.length; i++) {
+        const c = this.bullets[i];
+        c.vx += b.vx;
+        c.vy += b.vy;
+      }
+    }
+  }
+
+  // ── Seeded randomness (the ONLY randomness in the engine) ──────────────
+  // Emitters can request per-bullet jitter (rng_dir / rng_range equivalents):
+  //   speedJitter:  ± fraction of speed (e.g. 0.5 => 0.5x..1.5x)
+  //   angleJitter:  ± radians
+  //   colorJitter:  hue spread around the base color (hex -> hsl)
+  // All draws come from this._rng, so a fight is fully deterministic.
+  _rnd() { return this._rng(); }
+  _rndRange(min, max) { return min + (max - min) * this._rng(); }
+  _rndAngle() { return this._rng() * TAU; }
+  _jitterSpeed(em, base) {
+    if (!em.speedJitter) return base;
+    return base * (1 + (this._rng() * 2 - 1) * em.speedJitter);
+  }
+  _jitterAngle(em, base) {
+    if (!em.angleJitter) return base;
+    return base + (this._rng() * 2 - 1) * em.angleJitter;
+  }
+  // Resolve a bullet's attraction point: 'player' | 'boss' | {x,y} | [x,y].
+  _resolveAttract(b, p) {
+    const pt = b.attractPoint;
+    if (pt === 'player') return { x: p.x, y: p.y };
+    if (pt === 'boss') return { x: this.boss.x, y: this.boss.y };
+    if (Array.isArray(pt)) return { x: pt[0], y: pt[1] };
+    if (pt && typeof pt === 'object') return pt;
+    return { x: this.boss.x, y: this.boss.y };
+  }
+
+  _jitterColor(em, base) {
+    if (!em.colorJitter || !base || typeof base !== 'string' || base[0] !== '#') return base;
+    // hex -> hsl-ish shift: parse rgb, rotate hue by ±colorJitter degrees.
+    const n = parseInt(base.slice(1), 16);
+    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const mx = Math.max(r, g, b) / 255, mn = Math.min(r, g, b) / 255;
+    const l = (mx + mn) / 2;
+    let h = 0, s = 0;
+    if (mx !== mn) {
+      const d = mx - mn;
+      s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      if (r === mx * 255) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (g === mx * 255) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+    }
+    h = (h + (this._rng() * 2 - 1) * em.colorJitter + 360) % 360;
+    return `hsl(${h.toFixed(0)}, ${(s * 100).toFixed(0)}%, ${(l * 100).toFixed(0)}%)`;
+  }
+
+  // Release a field-frozen set of bullets: give each a fresh velocity.
+  _releaseField(rel) {
+    const p = this.player;
+    for (const b of this.bullets) {
+      if (!b.active) continue;
+      const s = rel.speed || 2;
+      let a;
+      if (rel.mode === 'aim') a = Math.atan2(p.y - b.y, p.x - b.x);
+      else if (rel.mode === 'outward') a = Math.atan2(b.y - this.boss.y, b.x - this.boss.x);
+      else a = this._rndAngle(); // 'random' (default) — seeded
+      b.vx = Math.cos(a) * s;
+      b.vy = Math.sin(a) * s;
+      // Restore the pre-freeze colors.
+      if (b._fc) { b.color = b._fc; b.coreColor = b._fcc; b._fc = null; }
     }
   }
 
@@ -469,6 +1296,22 @@ class DanmakuEngine {
         s.active = false;
         continue;
       }
+      // Destructible bullets (shooting hazards / dolls): shots damage them;
+      // at 0 hp they vanish and fire their deathBurst if any.
+      for (const eb of this.bullets) {
+        if (!eb.active || !eb.destructible) continue;
+        if (Math.hypot(s.x - eb.x, s.y - eb.y) < eb.r + s.r) {
+          s.active = false;
+          eb.hp -= S.damage || 1;
+          if (eb.hp <= 0) {
+            eb.active = false;
+            this.score += 500;
+            if (eb.deathBurst) this._emitAt(eb.x, eb.y, eb.deathBurst);
+          }
+          break;
+        }
+      }
+      if (!s.active) continue;
       if (Math.hypot(s.x - b.x, s.y - b.y) < CONFIG.BOSS_HITBOX + s.r) {
         s.active = false;
         this.phaseHp -= S.damage;
@@ -509,6 +1352,74 @@ class DanmakuEngine {
     }
   }
 
+  // ── Phase-level persistent beams (Moonlight Ray / taisei lasers) ────────
+  // A phase can declare `beams: [{t, dur, x|xn, width, y0, y1, angle,
+  // color, coreColor, unclearable}]`. Each is a thick laser column that
+  // exists for its time window and damages the player on contact, just like
+  // a bullet. `unclearable` beams survive bombs (taisei l->unclearable).
+  _activeBeams() {
+    const phase = this.phases[this.phaseIndex];
+    if (!phase || !phase.beams) return [];
+    const out = [];
+    for (const bm of phase.beams) {
+      if (bm._cleared) continue;
+      const t0 = bm.t || 0;
+      const t1 = bm.dur ? t0 + bm.dur : Infinity;
+      if (this.phaseTime < t0 || this.phaseTime >= t1) continue;
+      out.push(bm);
+    }
+    return out;
+  }
+
+  _updateBeams() {
+    const p = this.player;
+    if (!p.alive) return;
+    const hb = (p.focus ? p.focusHitbox : p.hitbox) / 2;
+    for (const bm of this._activeBeams()) {
+      const d = this._beamDist(bm, p.x, p.y);
+      const halfW = (bm.width || 40) / 2;
+      if (!bm._grazed && d < halfW + hb + 10 && d > halfW + hb) {
+        bm._grazed = true;
+        this.graze++;
+        this.score += 100;
+        this.bombGauge = Math.min(1, this.bombGauge + 0.02);
+        sfxPlay('graze');
+      } else if (d > halfW + hb + 14) {
+        bm._grazed = false; // re-arm graze once clear
+      }
+      if (p.invuln <= 0 && d < halfW + hb) {
+        this._hitPlayer();
+      }
+    }
+  }
+
+  // Distance from a point to a beam's centerline segment. The beam is a
+  // rotated rectangle: vertical centerline at x from y0..y1, rotated by
+  // `angle` around its midpoint.
+  // Effective beam angle at the current phase time. `bm.sweep` (rad/s) adds
+  // a constant rotation rate starting at bm.t — a searchlight-style sweeping
+  // beam (Danmakufu laser-sweep patterns). Collision and drawing must agree.
+  _beamAngle(bm) {
+    return (bm.angle || 0) + (bm.sweep ? bm.sweep * (this.phaseTime - (bm.t || 0)) : 0);
+  }
+  _beamDist(bm, px, py) {
+    const x = bm.xn !== undefined ? bm.xn * this.W : (bm.x !== undefined ? bm.x : this.W / 2);
+    const y0 = bm.y0 !== undefined ? bm.y0 : -10;
+    const y1 = bm.y1 !== undefined ? bm.y1 : this.H + 10;
+    const mx = x, my = (y0 + y1) / 2;
+    let lx = px - mx, ly = py - my;
+    const ang = this._beamAngle(bm);
+    if (ang) {
+      const c = Math.cos(-ang), s = Math.sin(-ang);
+      const nx = lx * c - ly * s;
+      const ny = lx * s + ly * c;
+      lx = nx; ly = ny;
+    }
+    const lo = y0 - my, hi = y1 - my;
+    const t = Math.max(lo, Math.min(hi, ly));
+    return Math.hypot(lx, ly - t);
+  }
+
   _hitPlayer() {
     const p = this.player;
     p.lives--;
@@ -536,6 +1447,10 @@ class DanmakuEngine {
     this.bombGauge = 0;
     // Bomb clears all bullets and gives brief invulnerability.
     for (const b of this.bullets) b.active = false;
+    // ...and any bombable beams (unclearable ones persist through bombs).
+    if (phase && phase.beams) {
+      for (const bm of phase.beams) if (!bm.unclearable) bm._cleared = true;
+    }
     p.invuln = 120;
     this.score += 1000;
     this.shake = 8;
@@ -545,6 +1460,8 @@ class DanmakuEngine {
     if (this.result) return;
     this.result = result;
     this.running = false;
+    // The last card's stats end here too.
+    this._finalizePhase(this.phaseIndex);
     // Release any held keys so they can't carry into the next fight.
     this.keys = {};
     if (this.player) this.player.focus = false;
@@ -560,7 +1477,7 @@ class DanmakuEngine {
     ctx.save();
     // Screen shake.
     if (this.shake > 0) {
-      ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
+      ctx.translate((this._rnd() - 0.5) * this.shake, (this._rnd() - 0.5) * this.shake);
       this.shake *= 0.9;
       if (this.shake < 0.5) this.shake = 0;
     }
@@ -577,6 +1494,9 @@ class DanmakuEngine {
       if (!b.active) continue;
       this._drawBullet(ctx, b);
     }
+
+    // Phase-level persistent beams (drawn over bullets, under the player).
+    this._drawBeams(ctx);
 
     // Player laser beam (continuous; the laser pattern emits no bullets).
     const S = this.shotPattern;
@@ -609,34 +1529,83 @@ class DanmakuEngine {
     ctx.restore();
   }
 
+  // Draw the active phase-level beams: a soft outer glow, a solid body
+  // (the collision width), and a bright core stripe.
+  _drawBeams(ctx) {
+    for (const bm of this._activeBeams()) {
+      const x = bm.xn !== undefined ? bm.xn * this.W : (bm.x !== undefined ? bm.x : this.W / 2);
+      const y0 = bm.y0 !== undefined ? bm.y0 : -10;
+      const y1 = bm.y1 !== undefined ? bm.y1 : this.H + 10;
+      const w = bm.width || 40;
+      const color = bm.color || '#fff8c0';
+      const core = bm.coreColor || '#ffffff';
+      ctx.save();
+      ctx.translate(x, (y0 + y1) / 2);
+      const ang = this._beamAngle(bm);
+      if (ang) ctx.rotate(ang);
+      const len = y1 - y0;
+      // Outer glow (wider than the hitbox — visual only).
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = color;
+      ctx.fillRect(-w, -len / 2, w * 2, len);
+      // Body (matches the collision width).
+      ctx.globalAlpha = 0.8;
+      ctx.fillRect(-w / 2, -len / 2, w, len);
+      // Bright core.
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = core;
+      ctx.fillRect(-w * 0.18, -len / 2, w * 0.36, len);
+      ctx.restore();
+    }
+  }
+
   // Render a bullet with a soft glow + bright core, and an optional shape.
   _drawBullet(ctx, b) {
     const r = b.r;
     const color = b.color || '#ff5555';
     const shape = b.shape || 'circle';
+    const op = b.opacity !== undefined ? b.opacity : 1;
+    // Motion trail (comet tail) behind fast bullets.
+    if (b.trail) {
+      const spd = Math.hypot(b.vx, b.vy);
+      if (spd > 0.5) {
+        const k = Math.min(14, 6 + spd * 1.5); // tail length (frames of motion)
+        ctx.save();
+        ctx.globalAlpha = 0.35 * op;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = r * 1.3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(b.x - b.vx * k, b.y - b.vy * k);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
     // Fast path for plain circles (no save/restore/rotate).
     if (shape === 'circle' && !b.rot) {
-      ctx.globalAlpha = 0.3;
+      ctx.globalAlpha = 0.3 * op;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(b.x, b.y, r * 1.9, 0, TAU);
       ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = op;
       ctx.fillStyle = b.coreColor || '#ffffff';
       ctx.beginPath();
       ctx.arc(b.x, b.y, r * 0.7, 0, TAU);
       ctx.fill();
+      ctx.globalAlpha = 1;
       return;
     }
     ctx.save();
     ctx.translate(b.x, b.y);
     if (b.rot) ctx.rotate(b.rot);
-    ctx.globalAlpha = 0.3;
+    ctx.globalAlpha = 0.3 * op;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(0, 0, r * 1.9, 0, TAU);
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = op;
     ctx.fillStyle = b.coreColor || '#ffffff';
     switch (shape) {
       case 'star': this._pathStar(ctx, r); break;
@@ -690,10 +1659,12 @@ class DanmakuEngine {
   }
 
   _drawBackground(ctx) {
-    // Simple per-boss tinted gradient + subtle stars.
+    // Simple per-boss tinted gradient + subtle stars. A phase may override
+    // the boss's palette (each Rumia card has its own sky).
+    const ph = this.phases[this.phaseIndex];
     const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, this.boss.bgTop || '#141428');
-    g.addColorStop(1, this.boss.bgBottom || '#05050c');
+    g.addColorStop(0, (ph && ph.bgTop) || this.boss.bgTop || '#141428');
+    g.addColorStop(1, (ph && ph.bgBottom) || this.boss.bgBottom || '#05050c');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, this.W, this.H);
   }
@@ -749,11 +1720,13 @@ class DanmakuEngine {
       ctx.closePath();
       ctx.fill();
     }
-    // Hitbox (red dot) — visible, Touhou-style; yellow when focused.
+    // Hitbox (red dot) — always clearly visible, Touhou-style. The dot
+    // tracks the hitbox size but never shrinks below a visible 3px, so
+    // focusing reads as "slightly smaller" rather than the dot vanishing.
     const hb = p.focus ? p.focusHitbox : p.hitbox;
-    ctx.fillStyle = p.focus ? '#ffff00' : '#ff0000';
+    ctx.fillStyle = '#ff0000';
     ctx.beginPath();
-    ctx.arc(0, 0, Math.max(1.5, hb / 2), 0, TAU);
+    ctx.arc(0, 0, Math.max(3, hb / 2), 0, TAU);
     ctx.fill();
     ctx.restore();
   }

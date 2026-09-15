@@ -39,12 +39,16 @@ class FightUI {
           <div class="hud-item">Score <span id="hud-score"></span></div>
           <div class="hud-item">Graze <span id="hud-graze"></span></div>
           <div class="hud-item">Phase <span id="hud-phase"></span></div>
+          <div class="hud-item">Time <span id="hud-timer"></span></div>
+          <div class="hud-item hud-practice" id="hud-close-wrap">Close <span id="hud-close"></span></div>
+          <div class="hud-item hud-practice" id="hud-moved-wrap">Moved <span id="hud-moved"></span></div>
           <div class="bomb-gauge"><div class="bomb-gauge-fill" id="bomb-gauge-fill"></div></div>
         </div>
-        <div class="fight-hints">Arrows / WASD move &nbsp;·&nbsp; Space / Z bomb &nbsp;·&nbsp; hold X to focus (slower, smaller hitbox)</div>
+        <div class="fight-hints">Arrows / WASD move &nbsp;·&nbsp; Space / X bomb &nbsp;·&nbsp; hold Shift to focus (slower, smaller hitbox)</div>
         <div class="fight-result hidden" id="fight-result">
           <div class="result-title" id="result-title"></div>
           <div class="result-sub" id="result-sub"></div>
+          <div class="fight-stats hidden" id="fight-stats"></div>
           <button id="btn-fight-continue">Continue</button>
         </div>
       </div>
@@ -93,6 +97,13 @@ class FightUI {
     // Ship color from the player's character.
     this.engine.playerColor = shipColorForPiece(playerPieceType);
 
+    // Practice-only extras: live per-card stats in the HUD, and a per-card
+    // stats table on the result screen. Hidden for regular (board) fights.
+    for (const id of ['hud-close-wrap', 'hud-moved-wrap']) {
+      this.modal.querySelector('#' + id).classList.toggle('hidden', !this._practiceMode);
+    }
+    this.resultEl.querySelector('#fight-stats').classList.add('hidden');
+
     this.resultEl.classList.add('hidden');
     this.modal.classList.remove('hidden');
     this._banner(boss.phases[difficulty === 'lunatic' ? 'lunatic' : 'normal'][0].name, false);
@@ -128,10 +139,21 @@ class FightUI {
     m.querySelector('#hud-score').textContent = hud.score;
     m.querySelector('#hud-graze').textContent = hud.graze;
     m.querySelector('#hud-phase').textContent = `${hud.phase + 1}/${hud.phaseCount}`;
+    // Countdown until the current spell card ends on its own (the phase also
+    // ends early if you destroy the boss's HP).
+    const remain = Math.max(0, Math.ceil(hud.phaseDuration - hud.phaseTime));
+    m.querySelector('#hud-timer').textContent = remain + 's';
     m.querySelector('#bomb-gauge-fill').style.width = `${Math.round(hud.bombGauge * 100)}%`;
     const hpPct = hud.phaseMaxHp > 0 ? (hud.phaseHp / hud.phaseMaxHp) * 100 : 0;
     m.querySelector('#boss-hp-fill').style.width = `${hpPct}%`;
     m.querySelector('#boss-hp-label').textContent = hud.phaseName || '';
+    // Live per-card practice stats: average distance to the closest bullet
+    // and total pixels moved, for the CURRENT spell card only.
+    if (this._practiceMode) {
+      m.querySelector('#hud-close').textContent =
+        hud.phaseAvgDist === null ? '—' : Math.round(hud.phaseAvgDist) + 'px';
+      m.querySelector('#hud-moved').textContent = Math.round(hud.phaseMoved) + 'px';
+    }
   }
 
   _onEnd(result) {
@@ -146,6 +168,23 @@ class FightUI {
       : (this._practiceMode
         ? 'You were overwhelmed. Back to the practice menu.'
         : 'You were overwhelmed. Your piece is captured.');
+    // Per-spell-card stats (Practice Mode only): for each card, the average
+    // distance to the closest bullet and total pixels moved.
+    const statsEl = this.resultEl.querySelector('#fight-stats');
+    if (this._practiceMode && this.engine.phaseStats) {
+      const rows = this.engine.phaseStats.map((s, i) => {
+        const close = s.distSamples > 0
+          ? Math.round(s.distSum / s.distSamples) + 'px'
+          : '—';
+        return `<div class="stats-row"><span class="stats-name">${i + 1}. ${s.name}</span>` +
+               `<span class="stats-vals">close ${close} · moved ${Math.round(s.moved)}px</span></div>`;
+      });
+      statsEl.innerHTML =
+        '<div class="stats-title">Spell card stats</div>' + rows.join('');
+      statsEl.classList.remove('hidden');
+    } else {
+      statsEl.classList.add('hidden');
+    }
     this.resultEl.classList.remove('hidden');
   }
 }

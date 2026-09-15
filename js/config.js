@@ -137,6 +137,10 @@ const CONFIG = {
 
   // Board size.
   BOARD_SIZE: 8,
+
+  // Multiplayer: how often (ms) a player relays its danmaku input state to the
+  // opponent so they can run a live spectator copy of your fight.
+  MP_INPUT_INTERVAL_MS: 33,
 };
 
 // Export for Node (tests); in the browser CONFIG is a global.

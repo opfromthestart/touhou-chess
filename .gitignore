@@ -3,6 +3,11 @@
 # Exported debug game logs (see js/debug/log.js).
 touhou-chess-log-*.json
 refs/
+runs/
+share/
+taisei/
+bin/
+lib/
 
 # Headless Chromium scratch (dom dumps + screenshots from test runs).
 .chromium-profile/

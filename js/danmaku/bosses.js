@@ -3,6 +3,12 @@
 // Lunatic = one extra phase + scaled-up parameters (speed, density, homing).
 //
 // Emit types: point, aimed, ring, spiral, fan, homing, curve, laser.
+//   - aimed / fan: use ODD counts so one bullet is dead-center on the player.
+//     An even count leaves the aim line open and the pattern is far weaker.
+//   - curve: expanding spiral around the spawn point (bearing rotates by
+//     `curve` rad/frame, radius grows at `speed`).
+//   - laser: a beam `laserLen` px long along the aim line, drawn as bullets
+//     `spacing` (default 8) px apart, refired every `interval`.
 // Bullet shapes: circle, star, petal, cross, diamond, rice.
 // Phase fields: name, duration (s), hp, noBombs (bool), emits[].
 // Emit fields: t (start s), type, count, speed, spread, angle, arms,
@@ -35,8 +41,85 @@ function getPhases(bossId, difficulty) {
   return base.map(p => scalePhase(p, difficulty));
 }
 
+// ── Shared Rumia patterns ─────────────────────────────────────────────────
+// Used by both Normal and Lunatic (scalePhase copies each emitter per
+// difficulty, so sharing the arrays is safe). Mechanics mined from real
+// Danmakufu spell scripts (refs/extracted/SCC Ver1.10a .../spellcard/Rumia):
+//   Spell01 — full-screen paired laser sweeps + accelerating tip volleys
+//   Spell02 — counter-rotating 12-way rice rings + HP-tiered dark aimed shots
+//   Spell03 — streams of accelerating 5-fans + orbiting laser shooters
+//   Spell04 — expanding flower-of-flowers + accelerating single-laser sweep
+// Flow principle: short bursts separated by breathing room, escalating
+// within each card, mixed bullet layers (slow decorative + fast threat).
+
+// Night Sign "Night Bird": flocks of 16-bullet arcs that bank outward like
+// wings — left wing blue, right wing green, one crimson bullet dead-aimed
+// in every flock. Four escalating sections: lone flocks -> paired flocks on
+// a 2.8s beat -> flocks interleaved with an aimed fan -> climax of faster
+// flocks plus red volleys.
+const RUMIA_NIGHT_BIRD = [
+  // Section 1 (0-28s): lone flocks every 1.2s.
+  { t: 1.5, type: 'arc', count: 15, center: true, spread: 0.9, sideTurn: 0.02, speed: 2.4, angleJitter: 0.015,
+    colorLeft: '#5588ff', colorRight: '#66dd88', colorCenter: '#ff4455',
+    coreColor: '#ffd0dc', shape: 'circle', r: 4, interval: 1.2, repeat: 22 },
+  // Section 2 (28-56s): paired flocks, 0.7s apart on a 2.8s beat.
+  { t: 28, type: 'arc', count: 15, center: true, spread: 0.8, sideTurn: 0.022, speed: 2.6, angleJitter: 0.015,
+    colorLeft: '#5588ff', colorRight: '#66dd88', colorCenter: '#ff4455',
+    coreColor: '#ffd0dc', shape: 'circle', r: 4, interval: 2.8, repeat: 10 },
+  { t: 28.7, type: 'arc', count: 15, center: true, spread: 0.8, sideTurn: 0.022, speed: 2.6, angleJitter: 0.015,
+    colorLeft: '#5588ff', colorRight: '#66dd88', colorCenter: '#ff4455',
+    coreColor: '#ffd0dc', shape: 'circle', r: 4, interval: 2.8, repeat: 10 },
+  // Section 3 (56-84s): flocks + 9-way aimed fan on the off-beat.
+  { t: 56, type: 'arc', count: 15, center: true, spread: 0.85, sideTurn: 0.024, speed: 2.8, angleJitter: 0.015,
+    colorLeft: '#5588ff', colorRight: '#66dd88', colorCenter: '#ff4455',
+    coreColor: '#ffd0dc', shape: 'circle', r: 4, interval: 2.8, repeat: 10 },
+  { t: 57.4, type: 'fan', count: 9, spread: 0.7, speed: 2.2,
+    color: '#ffaa44', coreColor: '#ffe8cc', shape: 'circle', r: 4, interval: 2.8, repeat: 10 },
+  // Section 4 (84-105s): climax — faster flocks + red volleys.
+  { t: 84, type: 'arc', count: 15, center: true, spread: 0.9, sideTurn: 0.026, speed: 3.0, angleJitter: 0.02,
+    colorLeft: '#5588ff', colorRight: '#66dd88', colorCenter: '#ff4455',
+    coreColor: '#ffd0dc', shape: 'circle', r: 4, interval: 1.4, repeat: 15 },
+  { t: 84.5, type: 'volley', count: 8, speedMin: 1.5, speedMax: 4.0,
+    color: '#ff5555', coreColor: '#ffd0d0', shape: 'circle', r: 4, interval: 2.8, repeat: 8 },
+];
+
+// Darkness Sign "Demarcation": a deep field of counter-rotating rice rings
+// (the "darkness" lattice — Spell02 style, each ring offset from the last
+// and gently decelerating), double rings of 16 that expand, freeze, then
+// drift perpendicular, and dark aimed shots that escalate with the fight
+// (single -> 5-way -> 8-way ring, Spell02 TDark tiers). One field-freeze at
+// 65s: everything halts white, then releases outward.
+const RUMIA_DEMARCATION_FREEZES = [
+  { t: 65, hold: 1.2, release: { mode: 'outward', speed: 1.5 } },
+];
+const RUMIA_DEMARCATION = [
+  // Background lattice: two counter-rotating 12-way rice rings.
+  { t: 2, type: 'ring', count: 12, rotStep: 0.105, speed: 1.5, retention: 0.995, life: 300,
+    color: '#66dd88', coreColor: '#e0ffe8', shape: 'rice', r: 4, interval: 0.7, repeat: -1 },
+  { t: 2.35, type: 'ring', count: 12, rotStep: -0.126, speed: 1.2, retention: 0.995, life: 300,
+    color: '#ffcc44', coreColor: '#fff2cc', shape: 'rice', r: 4, interval: 0.8, repeat: -1 },
+  // Double rings: expand -> hold -> drift perpendicular (tangent).
+  { t: 4, type: 'ring', count: 16, releaseTangent: true, flyDur: 1, holdDur: 0.4, releaseSpeed: 0.9, speed: 2.2,
+    color: '#5588ff', colorAlt: '#66dd88', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 9, repeat: 14 },
+  { t: 4.3, type: 'ring', count: 16, releaseTangent: true, flyDur: 1.2, holdDur: 0.4, releaseSpeed: 0.9, speed: 2.2,
+    color: '#5588ff', colorAlt: '#ff6688', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 9, repeat: 14 },
+  // Dark aimed shots, escalating tiers (deep purple).
+  { t: 6, type: 'aimed', count: 1, speed: 1.8,
+    color: '#8855cc', coreColor: '#e0d0ff', shape: 'circle', r: 5, interval: 7.5, repeat: 6 },
+  { t: 45, type: 'fan', count: 5, spread: 2.09, speed: 2.0,
+    color: '#8855cc', coreColor: '#e0d0ff', shape: 'circle', r: 5, interval: 7.5, repeat: 5 },
+  { t: 85, type: 'ring', count: 8, speed: 2.2,
+    color: '#8855cc', coreColor: '#e0d0ff', shape: 'circle', r: 5, interval: 6, repeat: 7 },
+];
+
 const BOSSES = {
-  // ── Rumia — Pawn (value 1), easiest. Stationary, simple aimed danmaku. ──
+  // ── Rumia — Pawn (value 1). Top-center, nocturnal danmaku. ──
+  // Spell names from the VERIFIED video analysis in
+  // refs/stages/spell_card_descriptions.md (only Rumia's section is
+  // verified); pattern mechanics rebuilt from real Danmakufu spell scripts
+  // (SCC Ver1.10a Rumia Spell01-04) for proper flow.
+  //   Normal:  Night Sign "Night Bird", Darkness Sign "Demarcation"
+  //   Lunatic: + Moon Sign "Moonlight Ray" (midboss spell, Hard/Lunatic only)
   rumia: {
     name: 'Rumia',
     color: '#9a8cff',
@@ -46,70 +129,102 @@ const BOSSES = {
     phases: {
       normal: [
         {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 100,
-          emits: [
-            { t: 0, type: 'aimed', count: 3, spread: 0.35, speed: 3, color: '#ff5555', coreColor: '#ffd0d0', shape: 'circle', interval: 0.55 },
-            { t: 0.6, type: 'ring', count: 10, speed: 2, color: '#5577ff', coreColor: '#d0e0ff', shape: 'diamond', rotSpeed: 0.12, interval: 1.3 },
-          ],
-        },
-        {
-          name: 'Night Bird',
-          duration: 17,
-          hp: 120,
-          emits: [
-            { t: 0, type: 'fan', count: 7, spread: 1.3, speed: 2.6, color: '#ff8855', coreColor: '#ffe0c0', shape: 'petal', rotSpeed: 0.2, interval: 0.9, angle: Math.PI * 0.75 },
-            { t: 0.45, type: 'fan', count: 7, spread: 1.3, speed: 2.6, color: '#ff8855', coreColor: '#ffe0c0', shape: 'petal', rotSpeed: 0.2, interval: 0.9, angle: Math.PI * 0.25 },
-            { t: 0.3, type: 'ring', count: 14, speed: 2.1, color: '#ffaa55', coreColor: '#fff0d0', shape: 'star', rotSpeed: 0.15, interval: 1.1 },
-          ],
-        },
-        {
-          name: 'Demarcation',
-          duration: 18,
+          // Night Sign "Night Bird" (夜符「ナイトバード」, ~105s): flocks of
+          // 16-bullet arcs banking outward like wings (blue left, green
+          // right, one crimson dead-aimed in each flock), in four escalating
+          // sections with breathing room between. Dark smoky-brown sky.
+          name: 'Night Sign "Night Bird"',
+          duration: 105,
           hp: 130,
-          emits: [
-            { t: 0, type: 'spiral', arms: 2, rotSpeed: 0.35, speed: 2.6, color: '#55ffff', coreColor: '#e0ffff', shape: 'circle', interval: 0.16 },
-            { t: 0.5, type: 'aimed', count: 5, spread: 0.5, speed: 3.1, color: '#ffffff', coreColor: '#ffffff', shape: 'cross', rotSpeed: 0.1, interval: 0.6 },
-          ],
+          bgTop: '#1a120c',
+          bgBottom: '#0a0604',
+          emits: RUMIA_NIGHT_BIRD,
+        },
+        {
+          // Darkness Sign "Demarcation" (闇符「ディマーケイション」, ~130s):
+          // counter-rotating rice lattice + double tangent-drift rings +
+          // escalating dark aimed shots + one field-freeze. Deep
+          // purple-black sky.
+          name: 'Darkness Sign "Demarcation"',
+          duration: 130,
+          hp: 140,
+          bgTop: '#120a1e',
+          bgBottom: '#05030a',
+          freezes: RUMIA_DEMARCATION_FREEZES,
+          emits: RUMIA_DEMARCATION,
         },
       ],
       lunatic: [
         {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 110,
-          emits: [
-            { t: 0, type: 'aimed', count: 3, spread: 0.35, speed: 3, color: '#ff5555', coreColor: '#ffd0d0', shape: 'circle', interval: 0.5 },
-            { t: 0.6, type: 'ring', count: 12, speed: 2.1, color: '#5577ff', coreColor: '#d0e0ff', shape: 'diamond', rotSpeed: 0.14, interval: 1.1 },
-          ],
-        },
-        {
-          name: 'Night Bird',
-          duration: 17,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'fan', count: 8, spread: 1.4, speed: 2.7, color: '#ff8855', coreColor: '#ffe0c0', shape: 'petal', rotSpeed: 0.22, interval: 0.8, angle: Math.PI * 0.75 },
-            { t: 0.4, type: 'fan', count: 8, spread: 1.4, speed: 2.7, color: '#ff8855', coreColor: '#ffe0c0', shape: 'petal', rotSpeed: 0.22, interval: 0.8, angle: Math.PI * 0.25 },
-            { t: 0.3, type: 'ring', count: 16, speed: 2.2, color: '#ffaa55', coreColor: '#fff0d0', shape: 'star', rotSpeed: 0.16, interval: 0.95 },
-          ],
-        },
-        {
-          name: 'Demarcation',
-          duration: 18,
-          hp: 140,
-          emits: [
-            { t: 0, type: 'spiral', arms: 3, rotSpeed: 0.4, speed: 2.7, color: '#55ffff', coreColor: '#e0ffff', shape: 'circle', interval: 0.14 },
-            { t: 0.5, type: 'aimed', count: 6, spread: 0.55, speed: 3.2, color: '#ffffff', coreColor: '#ffffff', shape: 'cross', rotSpeed: 0.12, interval: 0.5 },
-          ],
-        },
-        {
-          name: 'Moonlight Ray',
-          duration: 18,
+          // Moon Sign "Moonlight Ray" (月符「ムーンライトレイ」, ~90s,
+          // midboss spell, Hard/Lunatic only): a massive white-gold vertical
+          // beam from above, flanked by neat falling columns of pale-green
+          // dots. Steady volleys of 8 red bullets aimed straight at the
+          // player (same time, same direction, different speeds), punctuated
+          // by a ring of 16 red 3-fans of rice (cluster speeds vary) with a
+          // circle of 16 blue circles riding along at the slowest fan's
+          // speed, then a 16-bullet green near-volley arc. Deep navy night
+          // sky.
+          name: 'Moon Sign "Moonlight Ray"',
+          duration: 90,
           hp: 150,
+          bgTop: '#0a0f2e',
+          bgBottom: '#03040c',
+          beams: [
+            // Delayed activation: the beam sits over the player's spawn lane,
+            // so it must NOT drop at t=0 — 3s to get out of the center.
+            { t: 3, xn: 0.5, width: 56, color: '#fff3b0', coreColor: '#ffffff' },
+          ],
           emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3, color: '#ff3333', coreColor: '#ffb0b0', shape: 'diamond', rotSpeed: 0.2, interval: 0.45, laserLen: 8 },
-            { t: 0.3, type: 'ring', count: 18, speed: 2.2, color: '#ffff55', coreColor: '#ffffd0', shape: 'star', rotSpeed: 0.18, interval: 0.8, r: 3 },
+            // Neat falling columns of small green dots either side of the beam.
+            { t: 0, type: 'column', xn: [0.38, 0.43, 0.57, 0.62], speed: 2.2, color: '#88ffaa', coreColor: '#e0ffe8', shape: 'circle', r: 3, interval: 0.25, repeat: -1 },
+            // 8-bullet red volleys aimed straight at the player; each bullet a
+            // different speed so the volley peels apart into a stretching line.
+            { t: 0.5, type: 'volley', count: 8, speedMin: 1.5, speedMax: 4.5, color: '#ff5555', coreColor: '#ffd0d0', shape: 'circle', r: 4, interval: 1.5, repeat: -1 },
+            // Ring of 16 red 3-fans of rice; cluster speeds vary 1.5..3.0.
+            { t: 13, type: 'ringFan', count: 16, per: 3, cSpread: 0.3, speeds: [1.5, 2.0, 2.5, 3.0], color: '#ff5555', coreColor: '#ffd0d0', shape: 'rice', r: 4, interval: 15.5, repeat: 6 },
+            // Circle of 16 blue circles riding along with the slowest fan.
+            { t: 13, type: 'ring', count: 16, speed: 1.5, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', r: 4, interval: 15.5, repeat: 6 },
+            // 16-bullet green arc: almost a volley, slight rotation between
+            // bullets.
+            { t: 14.5, type: 'fan', count: 16, spread: 0.18, speed: 2.6, color: '#66dd88', coreColor: '#e0ffe8', shape: 'circle', r: 4, interval: 15.5, repeat: 6 },
+          ],
+        },
+        {
+          // Night Sign "Night Bird" (Lunatic): same card as Normal; Lunatic
+          // scaling (speed/density multipliers) makes it denser and faster.
+          name: 'Night Sign "Night Bird"',
+          duration: 105,
+          hp: 140,
+          bgTop: '#1a120c',
+          bgBottom: '#0a0604',
+          emits: [
+            // 16 bullets per arc: 7 blue (bank left), 7 green (bank right),
+            // and one crimson bullet dead-aimed at the player.
+            { t: 0, type: 'arc', count: 15, center: true, spread: 0.9, sideTurn: 0.02, speed: 2.6,
+              colorLeft: '#5588ff', colorRight: '#66dd88', colorCenter: '#ff4455',
+              coreColor: '#ffd0dc', shape: 'circle', r: 4, interval: 1.1, repeat: -1 },
+          ],
+        },
+        {
+          // Darkness Sign "Demarcation" (Lunatic): same card as Normal,
+          // scaled up.
+          name: 'Darkness Sign "Demarcation"',
+          duration: 130,
+          hp: 150,
+          bgTop: '#120a1e',
+          bgBottom: '#05030a',
+          emits: [
+            { t: 0, type: 'ring', count: 16, releaseTangent: true, flyDur: 1, holdDur: 0.3, releaseSpeed: 0.8, speed: 2.2, color: '#5588ff', colorAlt: '#66dd88', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 26, repeat: 5 },
+            { t: 0.25, type: 'ring', count: 16, releaseTangent: true, flyDur: 1.2, holdDur: 0.3, releaseSpeed: 0.8, speed: 2.2, color: '#5588ff', colorAlt: '#ff6688', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 26, repeat: 5 },
+            { t: 4.5, type: 'ring', count: 16, releaseTangent: true, flyDur: 1, holdDur: 0.3, releaseSpeed: 0.8, speed: 2.2, color: '#5588ff', colorAlt: '#66dd88', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 26, repeat: 5 },
+            { t: 4.75, type: 'ring', count: 16, releaseTangent: true, flyDur: 1.2, holdDur: 0.3, releaseSpeed: 0.8, speed: 2.2, color: '#5588ff', colorAlt: '#ff6688', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 26, repeat: 5 },
+            { t: 9, type: 'ring', count: 16, releaseTangent: true, flyDur: 1, holdDur: 0.3, releaseSpeed: 0.8, speed: 2.2, color: '#5588ff', colorAlt: '#66dd88', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 26, repeat: 5 },
+            { t: 9.25, type: 'ring', count: 16, releaseTangent: true, flyDur: 1.2, holdDur: 0.3, releaseSpeed: 0.8, speed: 2.2, color: '#5588ff', colorAlt: '#ff6688', coreColor: '#d0e0ff', shape: 'rice', r: 4, life: 1800, interval: 26, repeat: 5 },
+            { t: 14, type: 'fan', count: 15, spread: 0.8, speed: 2.4, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', r: 4, script: [{ dur: 90, mode: 'fly' }, { dur: 30, mode: 'hold' }, { dur: 999999, mode: 'aim', speed: 2.5 }], interval: 26, repeat: 5 },
+            { t: 17.5, type: 'fan', count: 15, spread: 0.8, speed: 2.4, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', r: 4, script: [{ dur: 90, mode: 'fly' }, { dur: 30, mode: 'hold' }, { dur: 999999, mode: 'aim', speed: 2.5 }], interval: 26, repeat: 5 },
+            { t: 21, type: 'fan', count: 15, spread: 0.8, speed: 2.4, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', r: 4, script: [{ dur: 90, mode: 'fly' }, { dur: 30, mode: 'hold' }, { dur: 999999, mode: 'aim', speed: 2.5 }], interval: 26, repeat: 5 },
+            { t: 24.5, type: 'fan', count: 15, spread: 0.8, speed: 2.4, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', r: 4, script: [{ dur: 90, mode: 'fly' }, { dur: 30, mode: 'hold' }, { dur: 999999, mode: 'aim', speed: 2.5 }], interval: 26, repeat: 5 },
           ],
         },
       ],
@@ -117,79 +232,242 @@ const BOSSES = {
   },
 
   // ── Nitori — Knight (value 3). Water / gadget themes. ──
+  // Card list follows EoSD Stage 3 (refs/stages/Nitori.html). Every card is
+  // built around a distinct water "gadget" — movement, transformation and
+  // interaction rather than static aimed/ring barrages:
+  //   Normal  — River Drift (non-spell): shootable bubbles drift down and
+  //             pop into droplets. Optical Camouflage: streams that
+  //             materialize in mid-air (invisible until close), banked
+  //             flocks that scatter like currents, and a droplet curtain
+  //             with a shifting gap. Ooze Flooding: rotating dense rings,
+  //             stretching volleys, curtains sweeping in from the sides,
+  //             and ooze blobs that shed aimed droplets. Monster Cucumber:
+  //             big rolling cucumbers drift across the field shedding rings
+  //             of seeds — shoot them down for a seed burst.
+  //   Lunatic — Hydro Camouflage: the camouflage toolkit, denser, with
+  //             fading spirals. Kappa's Pororoca: tidal bore — waves surge
+  //             from opposite edges, each with a single shifting gap to
+  //             thread. Spin the Cephalic Plate: counter-rotating spirals,
+  //             a rotating web of fans, and a sweeping searchlight beam.
   nitori: {
     name: 'Nitori',
     color: '#55ccff',
     bgTop: '#061420',
     bgBottom: '#020810',
     move: 'sine',
-    moveAmp: 55,
-    moveSpeed: 0.9,
+    moveAmp: 65,
+    moveSpeed: 0.7,
     phases: {
       normal: [
         {
-          name: 'Non-spell',
+          // River Drift (non-spell): a calm current. Slow bubbles drift down
+          // the screen and pop into little rings of droplets; steady 3-way
+          // streams and soft rings keep the field readable. Bubbles are
+          // shootable — popping them early is worth the score.
+          name: 'River Drift',
           duration: 16,
           hp: 100,
           emits: [
             { t: 0, type: 'aimed', count: 3, spread: 0.3, speed: 2.5, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 0.5 },
-            { t: 0.4, type: 'aimed', count: 1, speed: 1.6, color: '#55ccff', coreColor: '#d0f0ff', shape: 'circle', interval: 0.85 },
+            { t: 0.4, type: 'ring', count: 12, speed: 1.7, color: '#55ccff', coreColor: '#d0f0ff', shape: 'circle', interval: 1.4 },
+            // Bubbles: big, slow, shootable. They shed a droplet ring as they
+            // drift and dissolve into one when they reach the bottom or are
+            // shot down.
+            { t: 0.6, type: 'edge', side: 'top', spacing: 160, speed: 0.8, r: 7,
+              color: '#99e6ff', coreColor: '#eaffff', shape: 'circle',
+              life: 800, fadeOut: 40, destructible: true, hp: 2,
+              spawnEvery: 200,
+              spawnEmits: [{ type: 'ring', count: 6, speed: 1.1, color: '#bfefff', coreColor: '#ffffff', shape: 'circle', r: 3, life: 110 }],
+              deathBurst: { type: 'ring', count: 8, speed: 1.5, color: '#bfefff', coreColor: '#ffffff', shape: 'circle', r: 3, life: 100 },
+              repeat: 1 },
           ],
         },
         {
+          // Optical Camouflage (Th10SC028): she hides in plain sight. Streams
+          // of white droplets materialize in mid-air (invisible until close)
+          // and dissolve before they reach you; banked flocks scatter outward
+          // like water currents; a curtain of droplets falls in waves with a
+          // single shifting gap; foam bursts emerge from nowhere.
+          name: 'Optical Camouflage',
+          duration: 17,
+          hp: 120,
+          emits: [
+            // Invisible streams: fade in 0.6s after leaving her, fade out as
+            // they arrive — you can't tell where they came from.
+            { t: 0, type: 'aimed', count: 5, spread: 0.5, speed: 2.4,
+              color: '#e8fbff', coreColor: '#ffffff', shape: 'circle', r: 3,
+              fadeIn: 35, fadeOut: 30, life: 260, interval: 0.6 },
+            // Banked flocks: wings curve outward and open like a current
+            // scattering around an obstacle.
+            { t: 0.5, type: 'arc', count: 9, spread: 1.0, sideTurn: 0.015, speed: 2.2,
+              colorLeft: '#7fe8d8', colorRight: '#66b8ff', colorCenter: '#ffffff',
+              shape: 'petal', rotSpeed: 0.08, center: true, interval: 1.1 },
+            // Droplet waves: a curtain falls from the top with a gap that
+            // shifts along the wave every time — thread the hole.
+            { t: 1.0, type: 'wall', side: 'top', cxn: 0.5, spacing: 18, speed: 1.6, r: 4,
+              color: '#9fe8ff', coreColor: '#e8fbff', shape: 'circle',
+              gapSize: 90, gapPos: 0.5, gapPosStep: 0.13, interval: 1.8 },
+            // Foam bursts: small rings emerging at random points in the upper
+            // field (seeded — deterministic per fight).
+            { t: 1.6, type: 'splash', inner: 'ring', count: 10, speed: 1.8,
+              color: '#d8f6ff', coreColor: '#ffffff', shape: 'circle', r: 3,
+              fadeIn: 20, fadeOut: 40, life: 160,
+              xn0: 0.15, xn1: 0.85, yn0: 0.2, yn1: 0.55, interval: 1.6 },
+          ],
+        },
+        {
+          // Ooze Flooding (Th10SC032): the river overflows. Dense blue rings
+          // rotate slowly as they expand; volleys stretch into peeling lines;
+          // curtains of ooze sweep in from the left and right edges (always
+          // visible coming in); big ooze blobs drift down shedding aimed
+          // droplets, and pop into a ring when shot down.
           name: 'Ooze Flooding',
           duration: 17,
           hp: 120,
           emits: [
-            { t: 0, type: 'ring', count: 16, speed: 1.8, color: '#88ff88', coreColor: '#e0ffe0', shape: 'circle', interval: 1.2 },
-            { t: 0.3, type: 'aimed', count: 3, spread: 0.3, speed: 2.5, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 0.5 },
+            { t: 0, type: 'ring', count: 18, rotStep: 0.05, speed: 1.8,
+              color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', r: 6, interval: 0.7 },
+            { t: 0.4, type: 'volley', count: 7, speedMin: 1.2, speedMax: 2.8,
+              color: '#cdefff', coreColor: '#ffffff', shape: 'circle', r: 3, interval: 1.4 },
+            // Curtains sweep in from the edges — you always see them coming.
+            { t: 0.8, type: 'wall', side: 'left', cyn: 0.5, spacing: 26, speed: 1.4, r: 5,
+              color: '#66ccee', coreColor: '#d8f4ff', shape: 'circle', interval: 4.5 },
+            { t: 3.05, type: 'wall', side: 'right', cyn: 0.5, spacing: 26, speed: 1.4, r: 5,
+              color: '#66ccee', coreColor: '#d8f4ff', shape: 'circle', interval: 4.5 },
+            // Ooze blobs: big, slow, shootable; shed a 3-way aimed spray as
+            // they drift down; pop into a ring when destroyed.
+            { t: 0.3, type: 'edge', side: 'top', spacing: 150, speed: 1.0, r: 9,
+              color: '#5fc8e8', coreColor: '#c8efff', shape: 'circle',
+              life: 640, fadeOut: 30, trail: true, destructible: true, hp: 3,
+              spawnEvery: 90,
+              spawnEmits: [{ type: 'aimed', count: 3, spread: 0.35, speed: 1.6, color: '#9fe8ff', coreColor: '#ffffff', shape: 'circle', r: 3, life: 220 }],
+              deathBurst: { type: 'ring', count: 10, speed: 1.8, color: '#9fe8ff', coreColor: '#ffffff', shape: 'circle', r: 3, life: 110 },
+              repeat: 1 },
           ],
         },
         {
-          name: 'Diluvial Mere',
+          // Monster Cucumber (Th10SC036): oversized cucumbers roll across the
+          // field, trailing wakes and shedding rings of seeds that carry
+          // their drift. Shoot a cucumber to pop it into a seed burst.
+          name: 'Monster Cucumber',
           duration: 18,
           hp: 130,
           emits: [
-            { t: 0, type: 'curve', count: 4, speed: 2.2, color: '#55aaff', coreColor: '#d0eaff', shape: 'circle', curve: 0.04, interval: 0.7 },
-            { t: 0.4, type: 'ring', count: 14, speed: 1.8, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 1.3 },
+            { t: 0, type: 'ring', count: 16, speed: 1.5,
+              color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', r: 4, interval: 1.0 },
+            { t: 0.3, type: 'aimed', count: 3, spread: 0.35, speed: 2.2,
+              color: '#bfefff', coreColor: '#ffffff', shape: 'circle', r: 3, interval: 0.8 },
+            // Cucumbers drifting in from the left edge (centered mid-field so
+            // all three enter on-screen).
+            { t: 0.5, type: 'edge', side: 'left', cyn: 0.45, spacing: 200, speed: 1.1, r: 14,
+              color: '#77dd88', coreColor: '#e0ffe8', shape: 'rice', rotSpeed: 0.04,
+              life: 600, trail: true, destructible: true, hp: 4,
+              spawnEvery: 70, spawnCount: 6, inheritVel: true,
+              spawnEmits: [{ type: 'ring', count: 5, speed: 1.4, color: '#a8f0b0', coreColor: '#eaffe8', shape: 'circle', r: 3, life: 130 }],
+              deathBurst: { type: 'ring', count: 12, speed: 2.2, color: '#a8f0b0', coreColor: '#ffffff', shape: 'circle', r: 3, life: 100 },
+              repeat: 1 },
+            // ...and from the right, a couple of seconds later.
+            { t: 2.5, type: 'edge', side: 'right', cyn: 0.45, spacing: 200, speed: 1.1, r: 14,
+              color: '#77dd88', coreColor: '#e0ffe8', shape: 'rice', rotSpeed: -0.04,
+              life: 600, trail: true, destructible: true, hp: 4,
+              spawnEvery: 70, spawnCount: 6, inheritVel: true,
+              spawnEmits: [{ type: 'ring', count: 5, speed: 1.4, color: '#a8f0b0', coreColor: '#eaffe8', shape: 'circle', r: 3, life: 130 }],
+              deathBurst: { type: 'ring', count: 12, speed: 2.2, color: '#a8f0b0', coreColor: '#ffffff', shape: 'circle', r: 3, life: 100 },
+              repeat: 1 },
           ],
         },
       ],
       lunatic: [
         {
-          name: 'Non-spell',
+          name: 'River Drift',
           duration: 16,
           hp: 110,
           emits: [
-            { t: 0, type: 'aimed', count: 4, spread: 0.35, speed: 2.6, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 0.45 },
-            { t: 0.4, type: 'aimed', count: 2, speed: 1.7, color: '#55ccff', coreColor: '#d0f0ff', shape: 'circle', interval: 0.7 },
+            { t: 0, type: 'aimed', count: 5, spread: 0.35, speed: 2.6, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 0.45 },
+            { t: 0.4, type: 'ring', count: 14, speed: 1.8, color: '#55ccff', coreColor: '#d0f0ff', shape: 'circle', interval: 1.2 },
+            { t: 0.6, type: 'edge', side: 'top', spacing: 120, speed: 0.9, r: 7,
+              color: '#99e6ff', coreColor: '#eaffff', shape: 'circle',
+              life: 700, fadeOut: 40, destructible: true, hp: 2,
+              spawnEvery: 160,
+              spawnEmits: [{ type: 'ring', count: 8, speed: 1.2, color: '#bfefff', coreColor: '#ffffff', shape: 'circle', r: 3, life: 110 }],
+              deathBurst: { type: 'ring', count: 10, speed: 1.6, color: '#bfefff', coreColor: '#ffffff', shape: 'circle', r: 3, life: 100 },
+              repeat: 1 },
           ],
         },
         {
-          name: 'Ooze Flooding',
+          // Hydro Camouflage (Th10SC030): the full camouflage toolkit. A
+          // fading 4-arm spiral wraps the field; invisible aimed streams
+          // materialize and dissolve; banked flocks scatter wider; the
+          // droplet curtain's gap is narrower and shifts faster; foam bursts
+          // are more frequent.
+          name: 'Hydro Camouflage',
           duration: 17,
           hp: 130,
           emits: [
-            { t: 0, type: 'ring', count: 20, speed: 1.9, color: '#88ff88', coreColor: '#e0ffe0', shape: 'circle', interval: 1.05 },
-            { t: 0.3, type: 'aimed', count: 4, spread: 0.35, speed: 2.6, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 0.45 },
+            { t: 0, type: 'spiral', arms: 4, rotSpeed: 0.6, speed: 2.3,
+              color: '#e8f6ff', coreColor: '#ffffff', shape: 'circle', r: 3,
+              fadeIn: 30, fadeOut: 40, interval: 0.12 },
+            { t: 0.3, type: 'aimed', count: 7, spread: 0.6, speed: 2.6,
+              color: '#e8fbff', coreColor: '#ffffff', shape: 'circle', r: 3,
+              fadeIn: 30, fadeOut: 30, life: 250, interval: 0.5 },
+            { t: 0.6, type: 'arc', count: 11, spread: 1.2, sideTurn: 0.02, speed: 2.4,
+              colorLeft: '#7fe8d8', colorRight: '#66b8ff', colorCenter: '#ffffff',
+              shape: 'petal', rotSpeed: 0.08, center: true, interval: 1.0 },
+            { t: 1.0, type: 'wall', side: 'top', cxn: 0.5, spacing: 16, speed: 1.8, r: 4,
+              color: '#9fe8ff', coreColor: '#e8fbff', shape: 'circle',
+              gapSize: 70, gapPos: 0.5, gapPosStep: 0.11, interval: 1.6 },
+            { t: 1.4, type: 'splash', inner: 'ring', count: 12, speed: 2.0,
+              color: '#d8f6ff', coreColor: '#ffffff', shape: 'circle', r: 3,
+              fadeIn: 20, fadeOut: 40, life: 150,
+              xn0: 0.1, xn1: 0.9, yn0: 0.15, yn1: 0.6, interval: 1.2 },
           ],
         },
         {
-          name: 'Diluvial Mere',
+          // Kappa's Pororoca (Th10SC038): a tidal bore. Waves surge up from
+          // the bottom edge and down from the top, each a full curtain with a
+          // single shifting gap — thread the bore as it rolls past. Stretching
+          // volleys and rotating rings fill the space between.
+          name: "Kappa's Pororoca",
           duration: 18,
           hp: 140,
           emits: [
-            { t: 0, type: 'curve', count: 6, speed: 2.3, color: '#55aaff', coreColor: '#d0eaff', shape: 'circle', curve: 0.045, interval: 0.6 },
-            { t: 0.4, type: 'ring', count: 18, speed: 1.9, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 1.1 },
+            // The bore: waves rising from below, gap shifting each wave.
+            { t: 0, type: 'wall', side: 'bottom', cxn: 0.5, spacing: 16, speed: 2.0, r: 5,
+              color: '#66d8f0', coreColor: '#d8f8ff', shape: 'circle',
+              gapSize: 80, gapPos: 0.5, gapPosStep: 0.16, interval: 1.6 },
+            // Counter-surge from above, offset, gap drifting the other way.
+            { t: 0.8, type: 'wall', side: 'top', cxn: 0.5, spacing: 18, speed: 1.7, r: 4,
+              color: '#8ce8ff', coreColor: '#eafcff', shape: 'circle',
+              gapSize: 90, gapPos: 0.3, gapPosStep: -0.13, interval: 2.0 },
+            { t: 0.4, type: 'volley', count: 9, speedMin: 1.4, speedMax: 3.0,
+              color: '#cdefff', coreColor: '#ffffff', shape: 'circle', r: 3, interval: 1.0 },
+            { t: 0.2, type: 'ring', count: 20, rotStep: 0.08, speed: 1.7,
+              color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', r: 5, interval: 0.6 },
           ],
         },
         {
-          name: 'Optical Camouflage',
+          // Spin the Cephalic Plate (Th10SC042): her head-plate spins. Two
+          // counter-rotating spirals trace the plate's edge, a web of fans
+          // rotates through the middle, a pale band rings the outside — and
+          // a searchlight beam sweeps the field.
+          name: 'Spin the Cephalic Plate',
           duration: 18,
           hp: 150,
+          beams: [
+            { t: 2, dur: 14, width: 26, angle: -Math.PI / 2, sweep: 0.35,
+              color: '#66ffcc', coreColor: '#e0fff5' },
+          ],
           emits: [
-            { t: 0, type: 'curve', count: 8, speed: 2.4, color: '#aaffee', coreColor: '#e0fff8', shape: 'petal', curve: 0.05, interval: 0.55 },
-            { t: 0.3, type: 'ring', count: 22, speed: 2.1, color: '#88ddff', coreColor: '#e0f5ff', shape: 'circle', interval: 0.9 },
+            { t: 0, type: 'spiral', arms: 2, rotSpeed: 0.5, speed: 2.0,
+              color: '#aaffcc', coreColor: '#e8ffe8', shape: 'circle', r: 4, interval: 0.14 },
+            { t: 0, type: 'spiral', arms: 2, rotSpeed: -0.5, speed: 2.0,
+              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', r: 4, interval: 0.14 },
+            // Rotating web: 8 triple-fans on a ring, the whole web turning.
+            { t: 0.3, type: 'ringFan', count: 8, per: 3, cSpread: 0.3, rotStep: 0.05, speed: 1.9,
+              color: '#ccffe8', coreColor: '#f0fff5', shape: 'circle', r: 3, interval: 0.4 },
+            // Pale outer band.
+            { t: 0.6, type: 'ring', count: 24, speed: 1.5,
+              color: '#88ffe0', coreColor: '#eafff8', shape: 'circle', r: 7, interval: 0.6 },
           ],
         },
       ],

@@ -3,49 +3,255 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Touhou Chess</title>
+  <title>Touhou Chess — Gensokyo</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
+  <!-- Scenic Gensokyo backdrop. Pure inline SVG (no external assets): a
+       daytime shrine valley — sky, sun, layered mountains, a torii + shrine,
+       and a foreground path. Sits behind everything and scales to fill. -->
+  <div id="scene" aria-hidden="true">
+    <svg viewBox="0 0 1440 810" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stop-color="#6fb0e6"/>
+          <stop offset="42%" stop-color="#a7d3ef"/>
+          <stop offset="72%" stop-color="#d7ecf6"/>
+          <stop offset="100%" stop-color="#eef6ea"/>
+        </linearGradient>
+        <radialGradient id="sun" cx="78%" cy="20%" r="42%">
+          <stop offset="0%"  stop-color="#fff7df" stop-opacity="0.95"/>
+          <stop offset="35%" stop-color="#ffe9a8" stop-opacity="0.45"/>
+          <stop offset="100%" stop-color="#ffe9a8" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="mtnFar" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#a9c3d4"/>
+          <stop offset="100%" stop-color="#bcd2dd"/>
+        </linearGradient>
+        <linearGradient id="mtnMid" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7fa392"/>
+          <stop offset="100%" stop-color="#93b49b"/>
+        </linearGradient>
+        <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#6f9a66"/>
+          <stop offset="100%" stop-color="#5c8a57"/>
+        </linearGradient>
+        <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#cdb487"/>
+          <stop offset="100%" stop-color="#b99a6c"/>
+        </linearGradient>
+        <linearGradient id="roof" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3a4152"/>
+          <stop offset="100%" stop-color="#232838"/>
+        </linearGradient>
+      </defs>
+
+      <!-- Sky + sun -->
+      <rect x="0" y="0" width="1440" height="810" fill="url(#sky)"/>
+      <rect x="0" y="0" width="1440" height="810" fill="url(#sun)"/>
+
+      <!-- Soft clouds -->
+      <g fill="#ffffff" opacity="0.75">
+        <ellipse cx="300" cy="150" rx="120" ry="34"/>
+        <ellipse cx="380" cy="120" rx="90"  ry="30"/>
+        <ellipse cx="980" cy="120" rx="140" ry="36"/>
+        <ellipse cx="1080" cy="150" rx="90" ry="28"/>
+        <ellipse cx="720" cy="90"  rx="70"  ry="22" opacity="0.6"/>
+      </g>
+
+      <!-- Far mountains -->
+      <path d="M0,470 L180,360 L340,450 L520,330 L720,440 L900,350 L1120,455 L1300,370 L1440,440 L1440,560 L0,560 Z" fill="url(#mtnFar)"/>
+      <!-- Snow caps -->
+      <path d="M520,330 L470,372 L500,360 L520,378 L545,356 L575,372 Z" fill="#eef5fb" opacity="0.85"/>
+      <path d="M900,350 L858,388 L888,376 L905,392 L930,372 L955,388 Z" fill="#eef5fb" opacity="0.8"/>
+
+      <!-- Mid mountains -->
+      <path d="M0,520 L220,430 L430,520 L640,440 L860,530 L1080,450 L1300,540 L1440,470 L1440,600 L0,600 Z" fill="url(#mtnMid)"/>
+
+      <!-- Near green hills -->
+      <path d="M0,560 C220,520 360,560 560,540 C780,518 980,560 1200,535 C1320,522 1400,540 1440,532 L1440,700 L0,700 Z" fill="url(#hill)"/>
+
+      <!-- Foreground ground / path -->
+      <path d="M0,640 C260,610 520,640 760,624 C1020,606 1240,640 1440,620 L1440,810 L0,810 Z" fill="url(#ground)"/>
+      <!-- Path highlight -->
+      <path d="M560,650 C700,668 760,690 820,720 C900,762 1000,790 1120,810 L820,810 C720,780 640,740 560,700 Z" fill="#e0cda0" opacity="0.55"/>
+
+      <!-- Trees / bamboo tufts -->
+      <g>
+        <g fill="#4f7a48">
+          <ellipse cx="120" cy="600" rx="46" ry="60"/>
+          <ellipse cx="170" cy="612" rx="34" ry="46"/>
+        </g>
+        <rect x="112" y="640" width="12" height="40" fill="#6b4a2e"/>
+        <g fill="#578a52">
+          <ellipse cx="1330" cy="596" rx="50" ry="66"/>
+          <ellipse cx="1282" cy="612" rx="34" ry="46"/>
+        </g>
+        <rect x="1322" y="644" width="12" height="40" fill="#6b4a2e"/>
+      </g>
+
+      <!-- ===== Shrine (left) ===== -->
+      <g transform="translate(150,300)">
+        <!-- Stone base -->
+        <rect x="-40" y="250" width="300" height="26" fill="#c9b79a"/>
+        <rect x="-24" y="238" width="268" height="16" fill="#d8c8ac"/>
+        <!-- White walls -->
+        <rect x="20" y="150" width="180" height="90" fill="#f3ede2"/>
+        <!-- Red pillars -->
+        <g fill="#b23a2c">
+          <rect x="20" y="150" width="12" height="90"/>
+          <rect x="94" y="150" width="12" height="90"/>
+          <rect x="188" y="150" width="12" height="90"/>
+        </g>
+        <!-- Door -->
+        <rect x="86" y="176" width="28" height="64" fill="#7a2a20"/>
+        <!-- Lower roof -->
+        <path d="M4,150 L110,108 L216,150 L196,150 L110,120 L24,150 Z" fill="url(#roof)"/>
+        <path d="M4,150 L110,108 L216,150" fill="none" stroke="#e8b24a" stroke-width="3" stroke-linecap="round"/>
+        <!-- Upper roof (larger, two-tier) -->
+        <path d="M-18,110 L110,58 L238,110 L210,110 L110,74 L10,110 Z" fill="url(#roof)"/>
+        <path d="M-18,110 L110,58 L238,110" fill="none" stroke="#e8b24a" stroke-width="3" stroke-linecap="round"/>
+        <!-- Roof ridge ornaments -->
+        <circle cx="110" cy="56" r="6" fill="#e8b24a"/>
+        <rect x="92" y="44" width="36" height="8" rx="3" fill="#e8b24a"/>
+      </g>
+
+      <!-- Torii gate (foreground, right of shrine) -->
+      <g transform="translate(430,430)" fill="#c0392b">
+        <!-- Curved top beam (kasagi) -->
+        <path d="M-30,26 Q120,-6 270,26 L270,44 Q120,14 -30,44 Z" fill="#a83226"/>
+        <path d="M-30,26 Q120,-6 270,26" fill="none" stroke="#7a1f16" stroke-width="4"/>
+        <!-- Second beam -->
+        <rect x="6" y="58" width="228" height="14" fill="#a83226"/>
+        <!-- Pillars (slightly flared) -->
+        <path d="M40,58 L58,58 L64,250 L34,250 Z"/>
+        <path d="M182,58 L200,58 L206,250 L176,250 Z"/>
+        <!-- Central strut -->
+        <rect x="112" y="44" width="16" height="16" fill="#a83226"/>
+      </g>
+    </svg>
+  </div>
+
   <div id="app">
-    <header id="topbar">
-      <h1>Touhou Chess</h1>
-      <div id="status">
-        <span id="turn-indicator">White (Protagonists) to move</span>
-        <span id="game-over-banner"></span>
+    <!-- Left icon rail: logo + the menu actions. -->
+    <nav id="rail" aria-label="Menu">
+      <div id="logo" title="Touhou Chess">
+        <svg class="logo-yinyang" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="18" fill="#14141c"/>
+          <path d="M20,2 A18,18 0 0 1 20,38 A9,9 0 0 1 20,20 A9,9 0 0 0 20,2 Z" fill="#f4f1ea"/>
+          <circle cx="20" cy="11" r="3" fill="#14141c"/>
+          <circle cx="20" cy="29" r="3" fill="#f4f1ea"/>
+        </svg>
+        <div class="logo-jp">東方囲碁</div>
+        <div class="logo-en">Touhou&nbsp;Chess</div>
       </div>
+
+      <div class="rail-btns">
+        <button id="btn-new-game" class="rail-btn" title="Start a new game">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></span>
+          <span class="lbl">New</span>
+        </button>
+        <button id="btn-practice" class="rail-btn" title="Practice Mode: fight any boss as any piece">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l7 16 2-7 7-2L4 4z"/></svg></span>
+          <span class="lbl">Practice</span>
+        </button>
+        <button id="btn-how-to" class="rail-btn" title="How to Play">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4.5c1.7 0 3 1.3 3 3 0 2-2 2.4-2.4 3.4-.2.5-.1 1 .1 1.6h-1.4c-.4-.7-.4-1.4-.2-2C11.4 10.8 9 10.6 9 8.5c0-1.7 1.3-2 3-2zM11 17h2v2h-2z"/></svg></span>
+          <span class="lbl">Help</span>
+        </button>
+        <button id="btn-sound" class="rail-btn" title="Toggle sound effects">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 5V4L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg></span>
+          <span class="lbl">Sound</span>
+        </button>
+        <button id="btn-multiplayer" class="rail-btn" title="Multiplayer: play a friend over the internet (P2P)">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg></span>
+          <span class="lbl">Multi</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Center column: player strip + board. -->
+    <div id="center">
+      <header id="topbar">
+        <div class="player-chip you">
+          <span class="chip-dot white"></span>
+          <span class="chip-text">
+            <span class="chip-name" id="chip-you-name">You</span>
+            <span class="chip-sub" id="chip-you-sub">White · Protagonists</span>
+          </span>
+        </div>
+        <div id="status">
+          <span id="turn-indicator">White (Protagonists) to move</span>
+          <span id="game-over-banner"></span>
+        </div>
+        <div class="player-chip boss">
+          <span class="chip-text right">
+            <span class="chip-name" id="chip-opp-name">Bosses</span>
+            <span class="chip-sub" id="chip-opp-sub">Black · Youkai</span>
+          </span>
+          <span class="chip-dot black"></span>
+        </div>
+      </header>
+
+      <main id="main">
+        <div id="captured-tray-black" class="captured-tray" title="Pieces captured by Bosses (Black)"></div>
+        <div id="board-wrap">
+          <div id="board"></div>
+          <div id="promotion-picker" class="hidden">
+            <div class="promo-title">Promote to:</div>
+            <div class="promo-choices"></div>
+          </div>
+        </div>
+        <div id="captured-tray-white" class="captured-tray" title="Pieces captured by You (White)"></div>
+      </main>
+    </div>
+
+    <!-- Right info panel: player cards, fight log, in-game controls. -->
+    <aside id="side-panel">
+      <div class="pcard pcard-you">
+        <div class="pcard-avatar" id="avatar-you"></div>
+        <div class="pcard-meta">
+          <div class="pcard-name" id="pcard-you-name">Reimu Hakurei</div>
+          <div class="pcard-sub">You · Protagonists</div>
+        </div>
+      </div>
+      <div class="pcard pcard-boss">
+        <div class="pcard-avatar" id="avatar-boss"></div>
+        <div class="pcard-meta">
+          <div class="pcard-name" id="pcard-boss-name">Kaguya Houraisan</div>
+          <div class="pcard-sub">Bosses · Youkai</div>
+        </div>
+      </div>
+
+      <div id="log-panel">
+        <h2>Fight Log</h2>
+        <ul id="move-log"></ul>
+      </div>
+
+      <!-- Multiplayer chat (hidden until a PVP match starts). -->
+      <div id="chat-panel" class="hidden">
+        <h2>Chat</h2>
+        <ul id="chat-log"></ul>
+        <div class="chat-input-row">
+          <input id="chat-input" class="chat-input" placeholder="Say something…" maxlength="200"
+                 autocomplete="off" spellcheck="false" />
+          <button id="chat-send-btn" class="btn chat-send-btn">Send</button>
+        </div>
+      </div>
+
       <div id="controls">
-        <button id="btn-new-game">New Game</button>
-        <button id="btn-undo">Undo</button>
-        <button id="btn-practice" title="Practice Mode: fight any boss as any piece, either difficulty">Practice</button>
-        <button id="btn-how-to">How to Play</button>
-        <button id="btn-export-log" title="Download this game as a JSON log for offline replay/debugging">Export Log</button>
-        <label class="ai-strength-label" for="ai-strength">AI</label>
+        <label class="ai-strength-label" for="ai-strength" id="ai-strength-label">AI</label>
         <select id="ai-strength" title="AI strength (search depth)">
           <option value="easy">Easy</option>
           <option value="normal" selected>Normal</option>
           <option value="hard">Hard</option>
         </select>
-        <button id="btn-sound" title="Toggle sound effects">🔊 Sound</button>
+        <button id="btn-undo">Undo</button>
+        <button id="btn-export-log" title="Download this game as a JSON log for offline replay/debugging">Export Log</button>
+        <!-- Multiplayer-only controls (hidden until a PVP match starts). -->
+        <button id="mp-leave-btn" class="hidden" title="Leave the match and return to the menu">Leave match</button>
       </div>
-    </header>
-
-    <main id="main">
-      <div id="captured-tray-black" class="captured-tray" title="Pieces captured by Black (bosses)"></div>
-      <div id="board-wrap">
-        <div id="board"></div>
-        <div id="promotion-picker" class="hidden">
-          <div class="promo-title">Promote to:</div>
-          <div class="promo-choices"></div>
-        </div>
-      </div>
-      <div id="captured-tray-white" class="captured-tray" title="Pieces captured by White (protagonists)"></div>
-    </main>
-
-    <div id="log-panel">
-      <h2>Fight Log</h2>
-      <ul id="move-log"></ul>
-    </div>
+    </aside>
   </div>
 
   <div id="how-to-modal" class="modal hidden">
@@ -79,6 +285,94 @@
     </div>
   </div>
 
+  <!-- Multiplayer: host / join a room. -->
+  <div id="mp-connect-modal" class="modal hidden">
+    <div class="modal-content mp-connect-content">
+      <h2>Multiplayer</h2>
+      <p class="mp-intro">
+        Play a friend over the internet (peer-to-peer). Host a room and share the code,
+        or join one you were given. You’ll be <strong>White</strong> if you host,
+        <strong>Black</strong> if you join.
+      </p>
+      <div class="mp-name-row">
+        <label for="mp-name-input">Play as</label>
+        <input id="mp-name-input" class="mp-name-input" placeholder="YOUR NAME" maxlength="16"
+               autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="mp-host-section">
+        <button id="mp-host-btn" class="btn mp-primary">Host a room</button>
+        <div id="mp-code-display" class="mp-code-display" style="display:none">
+          <span class="mp-code-label">Share this code:</span>
+          <span class="mp-code" id="mp-code-value"></span>
+        </div>
+      </div>
+      <div class="mp-divider">or</div>
+      <div class="mp-join-row" id="mp-join-row">
+        <input id="mp-code-input" class="mp-code-input" placeholder="ROOM CODE" maxlength="4"
+               autocomplete="off" spellcheck="false" />
+        <button id="mp-join-btn" class="btn">Join</button>
+      </div>
+      <div id="mp-net-status" class="mp-net-status" aria-live="polite"></div>
+      <button id="mp-close-connect" class="btn">Close</button>
+    </div>
+  </div>
+
+  <!-- Multiplayer: dual danmaku race overlay (both players see both screens). -->
+  <div id="mp-fights-overlay" class="mp-fights-overlay hidden">
+    <div class="mp-fights-title">⚡ Danmaku race — whoever runs out of lives first loses the capture!</div>
+    <div class="mp-fights-grid">
+      <!-- My own (controllable) fight. -->
+      <div class="mp-fight-panel" id="mp-panel-own">
+        <div class="mp-fight-tag" id="mp-panel-own-tag">Your fight</div>
+        <div class="mp-fight-bossrow">
+          <span class="mp-boss-name" id="mp-panel-own-boss-name"></span>
+          <span class="mp-diff" id="mp-panel-own-diff"></span>
+        </div>
+        <div class="mp-ship" id="mp-panel-own-ship"></div>
+        <div class="mp-canvas-wrap">
+          <canvas id="mp-canvas-own" width="480" height="640"></canvas>
+        </div>
+        <div class="mp-hud">
+          <span class="mp-hud-item" id="mp-panel-own-lives">Lives 3</span>
+          <span class="mp-hud-item" id="mp-panel-own-bombs">Bombs 2</span>
+          <span class="mp-hud-item" id="mp-panel-own-phase">Phase 1/3</span>
+        </div>
+        <div class="mp-spell" id="mp-panel-own-spell-name"></div>
+        <div class="mp-boss-hp-wrap"><div class="mp-boss-hp-fill" id="mp-panel-own-boss-hp"></div></div>
+      </div>
+      <!-- Opponent’s fight (spectator copy driven by their relayed input). -->
+      <div class="mp-fight-panel" id="mp-panel-opp">
+        <div class="mp-fight-tag" id="mp-panel-opp-tag">Opponent’s fight</div>
+        <div class="mp-fight-bossrow">
+          <span class="mp-boss-name" id="mp-panel-opp-boss-name"></span>
+          <span class="mp-diff" id="mp-panel-opp-diff"></span>
+        </div>
+        <div class="mp-ship" id="mp-panel-opp-ship"></div>
+        <div class="mp-canvas-wrap">
+          <canvas id="mp-canvas-opp" width="480" height="640"></canvas>
+        </div>
+        <div class="mp-hud">
+          <span class="mp-hud-item" id="mp-panel-opp-lives">Lives 3</span>
+          <span class="mp-hud-item" id="mp-panel-opp-bombs">Bombs 2</span>
+          <span class="mp-hud-item" id="mp-panel-opp-phase">Phase 1/3</span>
+        </div>
+        <div class="mp-spell" id="mp-panel-opp-spell-name"></div>
+        <div class="mp-boss-hp-wrap"><div class="mp-boss-hp-fill" id="mp-panel-opp-boss-hp"></div></div>
+      </div>
+    </div>
+    <div class="mp-fights-hint">Move with Arrows/WASD · Space/X to bomb · hold Shift to focus. Watch your opponent’s screen on the right.</div>
+  </div>
+
+  <!-- Multiplayer: end-of-match / disconnect result (separate from the AI game-over). -->
+  <div id="mp-result-modal" class="modal hidden">
+    <div class="modal-content game-over-content">
+      <h2 id="mp-result-title"></h2>
+      <p id="mp-result-sub" class="game-over-sub"></p>
+      <div id="mp-result-stats" class="game-over-stats"></div>
+      <button id="mp-result-btn" class="btn">Return to menu</button>
+    </div>
+  </div>
+
   <!-- Scripts: no build step, no dependencies. -->
   <script src="js/config.js"></script>
   <script src="js/audio/sfx.js"></script>
@@ -93,5 +387,24 @@
   <script src="js/debug/log.js"></script>
   <script src="js/debug/replay.js"></script>
   <script src="js/main.js"></script>
+  <!-- Multiplayer: PeerJS (vendored) + thin wrapper + PVP controller. -->
+  <script src="vendor/peerjs.min.js"></script>
+  <script src="js/net/peer.js"></script>
+  <script src="js/multiplayer.js"></script>
+  <script>
+    // Fill the two player-card portraits from the shared character art so the
+    // side panel reads as a real match screen (Reimu = you, Kaguya = the boss).
+    (function () {
+      function put(elId, charId) {
+        var el = document.getElementById(elId);
+        if (!el || typeof makeCharacterCanvas !== 'function') return;
+        var cv = makeCharacterCanvas(charId, 96);
+        cv.className = 'pcard-canvas';
+        el.appendChild(cv);
+      }
+      put('avatar-you', 'reimu');
+      put('avatar-boss', 'kaguya');
+    })();
+  </script>
 </body>
 </html>
