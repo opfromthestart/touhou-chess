@@ -26,6 +26,12 @@
 //   - aimRing: ring starts at the aim line — one bullet dead on the player
 //     (EoSD aim_mode 2).
 //   - colors: list cycled per fire (EoSD ins_118 color sequences).
+//   - Lifetime: bullets despawn when they leave the screen or the card ends
+//     (Touhou default) — do NOT set `life` to kill bullets mid-screen. The
+//     only legitimate `life` uses: laser segments (beam tail length + density
+//     budget), homing / retention / stationary bullets (they never reach the
+//     screen edge and would accumulate), and fadeOut camouflage (the fade
+//     ramps over the remaining life).
 
 const TAU_LOCAL = Math.PI * 2;
 
@@ -141,7 +147,7 @@ const RUMIA_NONSPELL = [
 // 57 rays, speed x1.2) approximates L.
 const RUMIA_MOONLIGHT = [
   { t: 0.5, type: 'fanVolley', count: 42, spread: Math.PI, center: true, rows: 1,
-    speed: 2.5, life: 240,
+    speed: 2.5,
     interval: 0.667, repeat: -1,
     color: '#fff8d0', coreColor: '#ffffff', shape: 'circle', r: 4 },
 ];
@@ -178,7 +184,7 @@ const RUMIA_NIGHT_BIRD = [
 const RUMIA_DEMARCATION = [
   // Sub18: 10-bullet fan (50.4° span), 8 rows peeling 3.0 -> 1.0.
   { t: 1.2, type: 'fanVolley', count: 10, center: true, spread: 0.504, rows: 8,
-    speed: 3.0, speed2: 1.0, life: 300,
+    speed: 3.0, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'rice', r: 4, repeat: 1, period: 22 },
   // Sub18: thin laser wall through the boss (ins_86, width 16) — six
   // segments 8 frames apart. Aims at the player and stretches to the screen
@@ -190,23 +196,23 @@ const RUMIA_DEMARCATION = [
   // Sub19: 10-ray 90° comet fans — 36 rows @ 2.0->1.0, then 28 @ 2.6->1.0,
   // then 36 again (EoSD N-tier counts; H/L use 48 rows).
   { t: 6.7, type: 'fanVolley', count: 10, spread: Math.PI / 2, rows: 36,
-    speed: 2.0, speed2: 1.0, life: 300,
+    speed: 2.0, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'rice', r: 4, repeat: 1, period: 22 },
   { t: 8.2, type: 'fanVolley', count: 10, spread: Math.PI / 2, rows: 28,
-    speed: 2.6, speed2: 1.0, life: 300,
+    speed: 2.6, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'rice', r: 4, repeat: 1, period: 22 },
   { t: 9.7, type: 'fanVolley', count: 10, spread: Math.PI / 2, rows: 36,
-    speed: 2.0, speed2: 1.0, life: 300,
+    speed: 2.0, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'rice', r: 4, repeat: 1, period: 22 },
   // Sub20: 13-bullet 180° half-circle fans, rows 8/9/10, 3.0 -> 1.0.
   { t: 11.7, type: 'fanVolley', count: 13, center: true, spread: Math.PI, rows: 8,
-    speed: 3.0, speed2: 1.0, life: 280,
+    speed: 3.0, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'circle', r: 4, repeat: 1, period: 22 },
   { t: 12.4, type: 'fanVolley', count: 13, center: true, spread: Math.PI, rows: 9,
-    speed: 3.0, speed2: 1.0, life: 280,
+    speed: 3.0, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'circle', r: 4, repeat: 1, period: 22 },
   { t: 13.1, type: 'fanVolley', count: 13, center: true, spread: Math.PI, rows: 10,
-    speed: 3.0, speed2: 1.0, life: 280,
+    speed: 3.0, speed2: 1.0,
     colors: DEMARCATION_COLORS, shape: 'circle', r: 4, repeat: 1, period: 22 },
   // Sub21: mirrored escalating streams — 10-bullet 73.8° fans, 2 rows
   // (second row half speed), +0.25 speed per shot, base ∓40.8° stepping
@@ -1026,7 +1032,9 @@ const BOSSES = {
           duration: 18,
           hp: 170,
           emits: [
-            { t: 0, type: 'homing', count: 4, speed: 2.8, color: '#9966ff', coreColor: '#e0d0ff', shape: 'petal', turn: 0.04, interval: 0.7 },
+            // life: missed homing bullets orbit the player and never leave
+            // the screen, so they need a finite lifetime (see header note).
+            { t: 0, type: 'homing', count: 4, speed: 2.8, color: '#9966ff', coreColor: '#e0d0ff', shape: 'petal', turn: 0.04, interval: 0.7, life: 600 },
             { t: 0.3, type: 'spiral', arms: 3, rotSpeed: 0.3, speed: 2.4, color: '#6688ff', coreColor: '#d0dcff', shape: 'circle', interval: 0.15 },
           ],
         },
@@ -1060,7 +1068,9 @@ const BOSSES = {
           hp: 140,
           emits: [
             { t: 0, type: 'spiral', arms: 3, rotSpeed: 0.25, speed: 2.4, color: '#44dddd', coreColor: '#d0ffff', shape: 'rice', interval: 0.14 },
-            { t: 0.6, type: 'homing', count: 3, speed: 2.6, color: '#44dddd', coreColor: '#d0ffff', shape: 'rice', turn: 0.035, interval: 0.8 },
+            // life: missed homing bullets orbit the player and never leave
+            // the screen, so they need a finite lifetime (see header note).
+            { t: 0.6, type: 'homing', count: 3, speed: 2.6, color: '#44dddd', coreColor: '#d0ffff', shape: 'rice', turn: 0.035, interval: 0.8, life: 600 },
           ],
         },
         {
@@ -1098,7 +1108,9 @@ const BOSSES = {
           hp: 150,
           emits: [
             { t: 0, type: 'spiral', arms: 4, rotSpeed: 0.28, speed: 2.5, color: '#44dddd', coreColor: '#d0ffff', shape: 'rice', interval: 0.12 },
-            { t: 0.6, type: 'homing', count: 4, speed: 2.7, color: '#44dddd', coreColor: '#d0ffff', shape: 'rice', turn: 0.04, interval: 0.65 },
+            // life: missed homing bullets orbit the player and never leave
+            // the screen, so they need a finite lifetime (see header note).
+            { t: 0.6, type: 'homing', count: 4, speed: 2.7, color: '#44dddd', coreColor: '#d0ffff', shape: 'rice', turn: 0.04, interval: 0.65, life: 600 },
           ],
         },
         {
@@ -1149,7 +1161,7 @@ const BOSSES = {
           hp: 130,
           emits: [
             { t: 0, type: 'aimed', count: 5, spread: 0.24, speed: 3.0, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.4 },
-            { t: 0.4, type: 'ring', count: 16, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1, life: 170 },
+            { t: 0.4, type: 'ring', count: 16, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1 },
             { t: 0.8, type: 'point', count: 1, speed: 2.4, angleStep: 0.14, color: '#bb88ff', coreColor: '#eeccff', shape: 'petal', trail: true, interval: 0.3 },
           ],
         },
@@ -1178,8 +1190,8 @@ const BOSSES = {
               colors: ['#ff5566', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.3,
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.0 },
             // Rotating double rings (Sub54): speeds 1.1 / 1.5, counter-spin.
-            { t: 2, type: 'ring', count: 32, speed: 1.1, rotStep: 0.1, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.6, life: 180 },
-            { t: 2.85, type: 'ring', count: 32, speed: 1.5, rotStep: -0.1, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.6, life: 180 },
+            { t: 2, type: 'ring', count: 32, speed: 1.1, rotStep: 0.1, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.6 },
+            { t: 2.85, type: 'ring', count: 32, speed: 1.5, rotStep: -0.1, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.6 },
           ],
         },
         {
@@ -1196,7 +1208,7 @@ const BOSSES = {
             // Escalating micro-spirals (Sub58): two bullets, polar growth.
             { t: 1, type: 'spiral', arms: 2, rotSpeed: 0.45, speed: 1.8, speedStep: 0.02, interval: 0.06,
               colors: ['#ffdd88', '#ffffff'], colorStep: 0.4,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', life: 150 },
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle' },
             // The unbreakable will (砕けぬ意思): a fast ring that decays
             // from 4.0 down toward 0.8.
             { t: 3, type: 'ring', count: 32, speed: 4.0, retention: 0.985, interval: 0.8,
@@ -1219,9 +1231,9 @@ const BOSSES = {
             // The heart that does not burn (焦れぬ心, Sub62/63): two
             // three-bullet flame streams that accelerate, then decay.
             { t: 1, type: 'aimed', count: 3, spread: 0.3, speed: 2.6, angleStep: 0.2, interval: 0.12,
-              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', trail: true, life: 180 },
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', trail: true },
             { t: 1.1, type: 'aimed', count: 3, spread: 0.3, speed: 2.6, angleStep: -0.2, interval: 0.12,
-              color: '#ff5566', coreColor: '#ffd0d8', shape: 'star', trail: true, life: 180 },
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'star', trail: true },
           ],
         },
         {
@@ -1233,9 +1245,9 @@ const BOSSES = {
             // 13-ray ring in two opposite, counter-rotating waves (the source
             // fires two 13/12-ray circles back-to-back, speed rows 3.0 -> 1.5).
             { t: 0, type: 'ring', count: 13, speed: 2.8, rotStep: 0.05, aimRing: true,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.5, life: 210 },
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.5 },
             { t: 0.75, type: 'ring', count: 13, speed: 2.2, rotStep: -0.05, rot: Math.PI / 13,
-              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.5, life: 210 },
+              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.5 },
             // Life Spring Infinity (H/L, Sub69): the moon erupts a full-circle
             // laser burst (52 beams). Approximated as a fast-rotating 12-beam
             // laser wheel sweeping the screen.
@@ -1257,20 +1269,20 @@ const BOSSES = {
             // dream colors (夢色の郷) — the "rainbow danmaku" (虹色の弾幕).
             { t: 0, type: 'ring', count: 16, speed: 2.2, rotStep: 0.06, aimRing: true,
               colors: ['#ff88bb', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.3,
-              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 1.1, life: 190 },
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 1.1 },
             { t: 0.55, type: 'ring', count: 16, speed: 2.2, rotStep: -0.06, rot: Math.PI / 16,
               colors: ['#66aaff', '#bb88ff', '#ff88bb', '#ffaa44', '#ffee44', '#66ff99'], colorStep: 0.3,
-              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 1.1, life: 190 },
+              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 1.1 },
             // First Moon / Rat Hour (Sub78/81): 8-way aimed circles aimed at
             // the player, over a 6-arm rotating spiral.
             { t: 1.2, type: 'spiral', arms: 6, rotSpeed: 0.35, speed: 2.4,
-              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.09, life: 150 },
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.09 },
             { t: 1.2, type: 'aimed', count: 9, spread: 0.5, speed: 2.8, angleStep: 0.05, interval: 0.5,
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', trail: true },
             // Ox Hour / Tiger Hour (Sub83/85): fast accelerating rings — the
             // "tiger hour" surge (source speed 5.0).
             { t: 2.4, type: 'ring', count: 22, speed: 3.2, speedStep: 0.03, rotStep: 0.04,
-              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.9, life: 170 },
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.9 },
             { t: 2.4, type: 'fan', count: 11, spread: 1.2, angle: Math.PI / 2, speed: 2.6, angleStep: 0.09, interval: 1.4,
               color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', trail: true },
             // Morning Mist / Dawn (Sub88): a storm of drifting random-angle
@@ -1279,7 +1291,7 @@ const BOSSES = {
               color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', life: 200 },
             { t: 3.6, type: 'ring', count: 18, speed: 2.4, rotStep: 0.02, speedStep: 0.02,
               colors: ['#ffffff', '#bb88ff', '#66aaff', '#ff88bb'], colorStep: 0.25,
-              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', interval: 0.7, life: 220 },
+              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', interval: 0.7 },
           ],
         },
       ],
@@ -1290,7 +1302,7 @@ const BOSSES = {
           hp: 150,
           emits: [
             { t: 0, type: 'aimed', count: 5, spread: 0.24, speed: 3.2, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.4 },
-            { t: 0.4, type: 'ring', count: 18, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1, life: 170 },
+            { t: 0.4, type: 'ring', count: 18, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1 },
             { t: 0.8, type: 'point', count: 1, speed: 2.4, angleStep: 0.14, color: '#bb88ff', coreColor: '#eeccff', shape: 'petal', trail: true, interval: 0.3 },
           ],
         },
@@ -1317,8 +1329,8 @@ const BOSSES = {
               colors: ['#ff5566', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.25,
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 0.8 },
             // Rotating double rings (H/L: 40-ring, faster).
-            { t: 2, type: 'ring', count: 40, speed: 1.3, rotStep: 0.12, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.4, life: 180 },
-            { t: 2.85, type: 'ring', count: 40, speed: 1.7, rotStep: -0.12, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.4, life: 180 },
+            { t: 2, type: 'ring', count: 40, speed: 1.3, rotStep: 0.12, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.4 },
+            { t: 2.85, type: 'ring', count: 40, speed: 1.7, rotStep: -0.12, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.4 },
           ],
         },
         {
@@ -1334,7 +1346,7 @@ const BOSSES = {
             // Escalating micro-spirals (H/L: 3 arms, faster growth).
             { t: 1, type: 'spiral', arms: 3, rotSpeed: 0.5, speed: 2.0, speedStep: 0.03, interval: 0.05,
               colors: ['#ffdd88', '#ffffff'], colorStep: 0.3,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', life: 150 },
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle' },
             // The unbreakable will (H/L: faster decay ring).
             { t: 3, type: 'ring', count: 40, speed: 4.4, retention: 0.985, interval: 0.7,
               color: '#8866ff', coreColor: '#ddccff', shape: 'circle', life: 210 },
@@ -1354,9 +1366,9 @@ const BOSSES = {
               color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
             // The heart that does not burn (H/L: 5-bullet fans, faster).
             { t: 1, type: 'aimed', count: 5, spread: 0.34, speed: 2.9, angleStep: 0.22, interval: 0.1,
-              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', trail: true, life: 180 },
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', trail: true },
             { t: 1.1, type: 'aimed', count: 5, spread: 0.34, speed: 2.9, angleStep: -0.22, interval: 0.1,
-              color: '#ff5566', coreColor: '#ffd0d8', shape: 'star', trail: true, life: 180 },
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'star', trail: true },
           ],
         },
         {
@@ -1366,9 +1378,9 @@ const BOSSES = {
           emits: [
             // The Eternity Line (H/L: 17-ray, faster waves).
             { t: 0, type: 'ring', count: 17, speed: 3.2, rotStep: 0.06, aimRing: true,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.2, life: 210 },
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.2 },
             { t: 0.75, type: 'ring', count: 17, speed: 2.5, rotStep: -0.06, rot: Math.PI / 17,
-              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.2, life: 210 },
+              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.2 },
             // Life Spring Infinity (H/L: 16-beam laser wheel, faster).
             { t: 1.6, type: 'laser', count: 1, speed: 2.4, laserLen: 360, angleStep: TAU_LOCAL / 16, interval: 2.0, warn: 0.9,
               color: '#66ffcc', coreColor: '#d8fff0', shape: 'diamond' },
@@ -1386,18 +1398,18 @@ const BOSSES = {
             // Penglai Jade Branch (H/L: 20-ray dream-color rings, faster).
             { t: 0, type: 'ring', count: 20, speed: 2.5, rotStep: 0.07, aimRing: true,
               colors: ['#ff88bb', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.25,
-              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 0.9, life: 190 },
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 0.9 },
             { t: 0.5, type: 'ring', count: 20, speed: 2.5, rotStep: -0.07, rot: Math.PI / 20,
               colors: ['#66aaff', '#bb88ff', '#ff88bb', '#ffaa44', '#ffee44', '#66ff99'], colorStep: 0.25,
-              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 0.9, life: 190 },
+              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 0.9 },
             // First Moon / Rat Hour (H/L: 8-arm spiral + 11-way aimed).
             { t: 1.1, type: 'spiral', arms: 8, rotSpeed: 0.42, speed: 2.6,
-              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.07, life: 150 },
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.07 },
             { t: 1.1, type: 'aimed', count: 11, spread: 0.55, speed: 3.0, angleStep: 0.06, interval: 0.4,
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', trail: true },
             // Ox / Tiger Hour (H/L: faster accelerating rings + fans).
             { t: 2.2, type: 'ring', count: 26, speed: 3.6, speedStep: 0.04, rotStep: 0.05,
-              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.75, life: 170 },
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.75 },
             { t: 2.2, type: 'fan', count: 13, spread: 1.4, angle: Math.PI / 2, speed: 2.9, angleStep: 0.1, interval: 1.2,
               color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', trail: true },
             // Morning Mist / Dawn (H/L: denser random storm).
@@ -1405,7 +1417,7 @@ const BOSSES = {
               color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', life: 200 },
             { t: 3.4, type: 'ring', count: 22, speed: 2.7, rotStep: 0.03, speedStep: 0.03,
               colors: ['#ffffff', '#bb88ff', '#66aaff', '#ff88bb'], colorStep: 0.2,
-              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', interval: 0.6, life: 220 },
+              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', interval: 0.6 },
           ],
         },
       ],

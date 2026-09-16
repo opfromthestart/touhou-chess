@@ -64,6 +64,10 @@ The player ship starts bottom-center (240, 580); the boss defaults to top-center
    ship (a small mercy). Losing all lives = lose.
 5. **Graze** (a bullet passing through the 10 px band just outside its collision envelope with
    the ship) scores points and fills the bomb gauge (+0.02 per graze).
+6. **Bullets despawn when they leave the screen or the card ends** — not on a timer (Touhou
+   convention). Do not use `life` to kill bullets mid-screen; it exists for special cases only
+   (§4.2): laser segments, homing/stationary bullets that never reach the screen edge, and
+   `fadeOut` camouflage.
 
 Player stats (lives, bombs, hitbox size) come from `CONFIG.DANMAKU_STATS[pieceType]` — a pawn
 fight gives 1 life / 1 bomb / a big 10 px hitbox; a king gives 3/3/6. Your pattern must be
@@ -150,7 +154,7 @@ emitter supports these fields:
 | `speedMul` / `densityMul` | float | Multipliers on speed/count; **also multiplied by the difficulty scaling** (§5.3). |
 | `aimRing` | bool | `ring` only: rotate the ring so exactly one bullet flies dead at the player (EoSD `aim_mode 2`). |
 | `rot` / `rotStep` | rad | `ring` only: static rotation offset / rotation added per fire (spiral rings). |
-| `life` | frames | Bullet lifetime (default 600). |
+| `life` | frames | Bullet lifetime. **Default: persists until the bullet leaves the screen or the card ends** (Touhou convention). Set it explicitly only for: laser segments (beam tail length + density budget), homing / retention / stationary bullets (they never reach the screen edge and would accumulate to the bullet cap), and `fadeOut` camouflage (the fade ramps over the remaining life). |
 | `speedJitter` / `angleJitter` / `colorJitter` | float | Seeded per-bullet randomness (§3). |
 
 **Aiming note:** unless `angle` is set, every emitter aims along the line from its origin to
@@ -373,8 +377,9 @@ reason a pattern PR gets bounced:
    you want an even-symmetric shape with a dead-center bullet.)
 2. **Dodgeable by a pawn.** 1 life, 1 bomb, 10 px hitbox, slow ship. If the card is unwinnable
    for a pawn, it's too hard — the pawn is the weakest protagonist in the game.
-3. **Respect the bullet cap.** The engine silently drops new bullets past **1200** on screen.
-   Check your peak density with the harness in §7; the existing cards peak well below the cap.
+3. **Respect the bullet cap.** The engine silently drops new bullets past **2000** on screen.
+   Check your peak density with the harness in §7; the existing cards peak well below the cap
+   (densest: Rumia Lunatic Demarcation, ~1200+).
 4. **Size HP gauges to the card's duration.** Player DPS scales with piece value, but the
    range stays within 2-3x (king vs pawn) so no piece can skip a card:
    king ≈ 12, queen ≈ 10, rook ≈ 9.2, bishop ≈ 8, knight ≈ 7.1, pawn ≈ 5 damage/s.
@@ -466,7 +471,7 @@ const snap = e => e.bullets.map(x => [x.x.toFixed(3), x.y.toFixed(3), x.vx.toFix
 - [ ] Both `normal` and `lunatic` variants exist (Lunatic = scaled + usually one extra card).
 - [ ] ODD counts for `aimed`/`fan` (or a deliberate reason in a comment).
 - [ ] Every emitter has a one-line comment; the card has a header comment (match existing style).
-- [ ] Dodgeable by a pawn; peak bullet count checked with the density harness (cap is 1200).
+- [ ] Dodgeable by a pawn; peak bullet count checked with the density harness (cap is 2000).
 - [ ] `node tmp-engine-test2.js` passes (regression includes all bosses × difficulties).
 - [ ] `CONFIG.SURVIVAL_PRIORS` updated if the card's difficulty changed meaningfully.
 - [ ] Playtested in Practice Mode; screenshot/GIF of the card attached to the PR.

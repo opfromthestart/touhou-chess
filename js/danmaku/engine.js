@@ -54,7 +54,15 @@ function makeBullet(x, y, vx, vy, opts = {}) {
     coreColor: opts.coreColor || null,
     shape: opts.shape || 'circle', // circle | star | petal | cross | diamond | rice
     type: opts.type || 'normal', // normal | homing | curve | laser
-    life: opts.life !== undefined ? opts.life : 600, // frames
+    // Touhou convention: a bullet despawns only when it leaves the screen or
+    // its card ends — NOT on a timer. The default lifetime is therefore
+    // effectively infinite; off-screen culling (see _updateBullets) and the
+    // phase-end field clear do the actual work. Set `life` explicitly only
+    // where a finite one is load-bearing: laser segments (beam tail length +
+    // density budget), homing / retention / stationary bullets (they never
+    // reach the screen edge and would accumulate to the bullet cap), and
+    // fadeOut camouflage (the fade ramps over the remaining life).
+    life: opts.life !== undefined ? opts.life : 1e7, // frames
     turn: opts.turn || 0, // homing turn rate OR constant banking (rad/frame)
     curve: opts.curve || 0, // curve acceleration (type==='curve')
     rot: opts.rot || 0, // current rotation (rad)
@@ -95,6 +103,9 @@ function makeBullet(x, y, vx, vy, opts = {}) {
     speedOscBase: opts.speedOscBase !== undefined ? opts.speedOscBase : 1,
     oscT: 0,
     // Fade in/out over the bullet's life (pdraw_timeout_scalefade equivalent).
+    // NOTE: fadeOut ramps over the REMAINING life, so it only works with an
+    // explicit finite `life` (camouflage bullets); the default lifetime is
+    // effectively infinite.
     fadeIn: opts.fadeIn || 0,          // frames to ramp opacity 0->1
     fadeOut: opts.fadeOut || 0,        // frames to ramp opacity 1->0 at end of life
     opacity: 1,
@@ -955,7 +966,9 @@ class DanmakuEngine {
   }
 
   _add(x, y, angle, speed, em, extra = {}) {
-    if (this.bullets.length > 1200) return; // cap
+    // Cap (raised from 1200: Touhou-style persistent bullets make dense cards
+    // like Demarcation legitimately peak above 1200).
+    if (this.bullets.length > 2000) return;
     // Per-bullet seeded jitter (Taisei rng_dir / rng_range equivalents):
     // every draw comes from this._rng, so the whole fight is deterministic.
     angle = this._jitterAngle(em, angle);
