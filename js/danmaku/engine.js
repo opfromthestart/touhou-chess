@@ -114,6 +114,10 @@ function makeBullet(x, y, vx, vy, opts = {}) {
     spawnT: 0,
     spawnN: 0,
     deathBurst: opts.deathBurst || null, // emitter fired when destroyed
+    // Laser telegraph: bullets of one laser instance share {solidAt} (global
+    // time in seconds). Until then they render as a thin line and deal no
+    // damage / grant no graze (see _checkCollisions / _drawBullet).
+    laserGroup: opts.laserGroup || null,
     // Staged trajectory: an ordered list of motion segments, each
     // {dur (frames), mode, ...}. Modes: fly | hold | aim | homing | spin |
     // gravity. The bullet walks through them over its life (fan -> stop -> aim).
@@ -507,6 +511,15 @@ class DanmakuEngine {
         // patterns can evolve per shot (e.g. ring rotStep rotation).
         em._count = (em._count || 0) + 1;
         if (em.repeat !== undefined && em.repeat !== -1 && em._count >= em.repeat) {
+          if (em.period) {
+            // Loop the cycle: re-arm at the next period boundary (EoSD spell
+            // bodies are repeating blocks). _count resets so per-fire
+            // evolution (angleStep/speedStep/colors) restarts each cycle.
+            const k = Math.max(1, Math.ceil((t - em.t) / em.period));
+            em._next = em.t + k * em.period;
+            em._count = 0;
+            continue;
+          }
           em._done = true; continue;
         }
         em._next += interval;
@@ -528,8 +541,27 @@ class DanmakuEngine {
     const speedMul = em.speedMul || 1;
     const densityMul = em.densityMul || 1;
     const count = Math.max(1, Math.round((em.count || 1) * densityMul));
-    const speed = (em.speed || 2) * speedMul;
-    const baseAngle = em.angle !== undefined ? em.angle : Math.atan2(p.y - oy, p.x - ox);
+    // em.speedStep adds speed PER FIRE (fire index = em._count): EoSD streams
+    // whose bullets accelerate shot over shot (Night Bird / Demarcation).
+    const speed = ((em.speed || 2) + (em.speedStep || 0) * (em._count || 0)) * speedMul;
+    // Base bearing: em.angle (absolute) or the aim line to the player.
+    // em.angleOffset adds a STATIC offset to the aim line — EoSD fans aim at
+    // the player plus a fixed swing base (Night Bird's ∓33°/∓45° bases).
+    // em.angleStep adds radians PER FIRE (fire index = em._count, 0-based):
+    // a rotating beam (Moonlight Ray's counter-rotating lasers) or a swinging
+    // aim (Night Bird / Demarcation streams).
+    const aimAngle = Math.atan2(p.y - oy, p.x - ox);
+    const baseAngle = (em.angle !== undefined ? em.angle : aimAngle + (em.angleOffset || 0))
+      + (em.angleStep || 0) * (em._count || 0);
+    // Color cycling on a GLOBAL phase clock (EoSD ins_118: a spell-wide color
+    // state advances every few frames, so ALL bullets fired at the same moment
+    // share a color and the whole field cycles together — Demarcation's
+    // white -> blue-gray -> green -> red wave). em.colorStep = seconds per
+    // color (EoSD: 2 frames = 1/30 s).
+    if (Array.isArray(em.colors) && em.colors.length) {
+      const step = em.colorStep || 1 / 30;
+      em._cycColor = em.colors[Math.floor(this.phaseTime / step) % em.colors.length];
+    }
 
     switch (em.type) {
       case 'point': {
@@ -552,7 +584,9 @@ class DanmakuEngine {
         // em.rot: static offset (rad). em.rotStep: rotation added PER FIRE
         // (rad) — makes a "rotating ring" (Taisei/Danmakufu spiral rings:
         // each full ring is offset from the last, e.g. +6° per emission).
-        const rot = (em.rot || 0) + (em.rotStep || 0) * (em._count || 0);
+        // em.aimRing: start the ring at the aim line (baseAngle), so exactly
+        // one bullet flies dead at the player — EoSD aim_mode 2 rings.
+        const rot = (em.aimRing ? baseAngle : (em.rot || 0)) + (em.rotStep || 0) * (em._count || 0);
         for (let i = 0; i < count; i++) {
           const a = rot + (i / count) * TAU;
           const extra = {};
@@ -616,6 +650,31 @@ class DanmakuEngine {
         }
         break;
       }
+      case 'fanVolley': {
+        // EoSD aim_mode 0/2 barrage: `count` RAYS spanning `em.spread`
+        // (default 90°, starting AT the aim line — the first ray is dead on
+        // the player; em.center re-centers the span on the aim line), each
+        // ray holding `em.rows` bullets whose speeds peel linearly from
+        // em.speed to em.speed2 (EoSD speed_1 -> speed_2 per row). This is
+        // the signature Moonlight Ray / Demarcation "comet fan": dense rays
+        // that stretch into long speed lines.
+        const rays = count;
+        const rows = Math.max(1, Math.round((em.rows || 1) * densityMul));
+        const spread = em.spread !== undefined ? em.spread : Math.PI / 2;
+        // em.speedStep: whole volley accelerates per fire (EoSD Demarcation
+        // Sub21 streams: +0.25 speed shot over shot).
+        const s1 = ((em.speed || 2) + (em.speedStep || 0) * (em._count || 0)) * speedMul;
+        const s2 = (em.speed2 !== undefined ? em.speed2 : s1) * speedMul;
+        const off = em.center ? -spread / 2 : 0;
+        for (let r = 0; r < rays; r++) {
+          const a = baseAngle + off + (rays > 1 ? (r / (rays - 1)) * spread : 0);
+          for (let k = 0; k < rows; k++) {
+            const sp = rows > 1 ? s1 - (s1 - s2) * (k / (rows - 1)) : s1;
+            this._add(ox, oy, a, sp, em);
+          }
+        }
+        break;
+      }
       case 'homing': {
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (i - (count - 1) / 2) * 0.2;
@@ -639,17 +698,33 @@ class DanmakuEngine {
       case 'laser': {
         // A laser is a line of bullets laid out ALONG the beam (offset from
         // the origin), refired every `interval` so successive segments overlap
-        // into a continuous beam. `laserLen` is the beam length in px; bullets
-        // sit `spacing` px apart and live `life` frames (default 120).
+        // into a continuous beam. Bullets sit `spacing` px apart and live
+        // `life` frames (default 120). Length is `laserLen` px, or — when
+        // omitted — out to the screen edge along the beam: lasers read as
+        // infinitely long rays (EoSD beams extend past the playfield; the
+        // off-screen tail is culled at the border).
+        // Telegraph (EoSD laser warning): for the first `warn` seconds
+        // (default 1.5, per-emitter override) the beam is a thin line that
+        // does no damage and grants no graze; then it grows to full width.
+        // EACH FIRING telegraphs independently — its own group, solid `warn`
+        // seconds after THIS spawn, so a segment that fires later doesn't
+        // inherit the first segment's countdown. Bullet lifetimes are
+        // extended so they survive until the beam is solid, plus their
+        // normal life after.
         const a = baseAngle;
         const spacing = em.spacing || 8;
-        const n = Math.max(1, Math.round(((em.laserLen || 80) / spacing) * densityMul));
+        const len = em.laserLen !== undefined ? em.laserLen : this._edgeDist(ox, oy, a) + 30;
+        const n = Math.max(1, Math.round((len / spacing) * densityMul));
+        const warn = em.warn !== undefined ? em.warn : 1.5;
+        const grp = { solidAt: this.time + warn };
+        const baseLife = em.life !== undefined ? em.life : 120;
+        const life = Math.max(baseLife, Math.ceil(warn * 60) + baseLife);
         for (let i = 0; i < n; i++) {
           const d = i * spacing;
           this._add(
             ox + Math.cos(a) * d, oy + Math.sin(a) * d,
             a, speed * 1.6, em,
-            { r: em.r || 5, color: em.color || '#ff3333', life: em.life !== undefined ? em.life : 120 },
+            { r: em.r || 5, color: em.color || '#ff3333', life, laserGroup: grp },
           );
         }
         break;
@@ -866,13 +941,26 @@ class DanmakuEngine {
     return out;
   }
 
+  // Distance from (x, y) to the nearest screen edge along direction `a`
+  // (rad). Used to stretch lasers out to the border of the playfield so they
+  // read as infinitely long.
+  _edgeDist(x, y, a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    let d = Infinity;
+    if (c > 1e-9) d = Math.min(d, (this.W - x) / c);
+    else if (c < -1e-9) d = Math.min(d, -x / c);
+    if (s > 1e-9) d = Math.min(d, (this.H - y) / s);
+    else if (s < -1e-9) d = Math.min(d, -y / s);
+    return d === Infinity ? 0 : d;
+  }
+
   _add(x, y, angle, speed, em, extra = {}) {
     if (this.bullets.length > 1200) return; // cap
     // Per-bullet seeded jitter (Taisei rng_dir / rng_range equivalents):
     // every draw comes from this._rng, so the whole fight is deterministic.
     angle = this._jitterAngle(em, angle);
     speed = this._jitterSpeed(em, speed);
-    const color = this._jitterColor(em, em.color);
+    const color = this._jitterColor(em, em._cycColor || em.color);
     // Optional per-emitter bullet fields (Taisei MoveParams + visuals).
     // Without this passthrough, pattern data could not express acceleration,
     // retention, attraction, speed oscillation, max distance, fades, rainbow
@@ -1226,22 +1314,46 @@ class DanmakuEngine {
     if (!S) return;
 
     // Laser (Marisa): a continuous beam straight up from the ship, not a
-    // stream of bullets. While the beam overlaps the boss it deals damage
-    // every frame; off-axis it does nothing.
-    if (S.type === 'laser') {
-      if (p.alive && this.phaseMaxHp > 0) {
-        const halfW = (S.width || 8) / 2;
-        if (b.y < p.y && Math.abs(b.x - p.x) < CONFIG.BOSS_HITBOX + halfW) {
-          this.phaseHp -= S.damage;
-          if (this.phaseHp < 0) this.phaseHp = 0;
-          this.score += S.damage * 10; // same 10 points per damage as bullets
+    // stream of bullets. The beam does most of the damage: while it overlaps
+    // the boss it deals damage every frame. She also always fires star shots
+    // spread at angles around straight-up, so she still lands hits when the
+    // boss is not directly overhead (where the beam is off-axis).
+    if (S.type === 'laser' && p.alive && this.phaseMaxHp > 0) {
+      const halfW = (S.width || 8) / 2;
+      if (b.y < p.y && Math.abs(b.x - p.x) < CONFIG.BOSS_HITBOX + halfW) {
+        this.phaseHp -= S.damage;
+        if (this.phaseHp < 0) this.phaseHp = 0;
+        this.score += S.damage * 10; // same 10 points per damage as bullets
+      }
+      if (this.frame % (S.starInterval || 12) === 0) {
+        sfxPlay('fire');
+        const n = S.starCount || 2;
+        const spread = S.starSpread || 0.9;
+        for (let i = 0; i < n; i++) {
+          const a = n > 1
+            ? -Math.PI / 2 + (i / (n - 1) - 0.5) * spread
+            : -Math.PI / 2;
+          this.playerShots.push({
+            x: p.x,
+            y: p.y - 10,
+            vx: Math.cos(a) * (S.starSpeed || 10),
+            vy: Math.sin(a) * (S.starSpeed || 10),
+            r: S.starR || 4,
+            color: S.starColor || S.color,
+            coreColor: '#ffffff',
+            shape: 'star',
+            type: 'normal',
+            damage: S.starDamage || 1,
+            rot: 0,
+            rotSpeed: S.starRotSpeed || 0.15,
+            active: true,
+          });
         }
       }
-      return;
     }
 
-    // Fire (auto).
-    if (p.alive && this.phaseMaxHp > 0 && this.frame % S.interval === 0) {
+    // Fire (auto). The laser pattern fires its own stars above.
+    if (S.type !== 'laser' && p.alive && this.phaseMaxHp > 0 && this.frame % S.interval === 0) {
       sfxPlay('fire');
       const baseAngle = -Math.PI / 2; // straight up
       for (let i = 0; i < S.count; i++) {
@@ -1302,7 +1414,9 @@ class DanmakuEngine {
         if (!eb.active || !eb.destructible) continue;
         if (Math.hypot(s.x - eb.x, s.y - eb.y) < eb.r + s.r) {
           s.active = false;
-          eb.hp -= S.damage || 1;
+          // Per-shot damage (Marisa's stars carry their own) falls back to
+          // the pattern's damage for ordinary patterns.
+          eb.hp -= s.damage || S.damage || 1;
           if (eb.hp <= 0) {
             eb.active = false;
             this.score += 500;
@@ -1314,7 +1428,7 @@ class DanmakuEngine {
       if (!s.active) continue;
       if (Math.hypot(s.x - b.x, s.y - b.y) < CONFIG.BOSS_HITBOX + s.r) {
         s.active = false;
-        this.phaseHp -= S.damage;
+        this.phaseHp -= s.damage || S.damage || 1;
         if (this.phaseHp < 0) this.phaseHp = 0;
         this.score += 10;
       }
@@ -1333,6 +1447,9 @@ class DanmakuEngine {
     const hb = (p.focus ? p.focusHitbox : p.hitbox) / 2;
     for (const b of this.bullets) {
       if (!b.active) continue;
+      // Laser telegraph: while the beam is still its thin warning line it
+      // neither hits nor grazes.
+      if (b.laserGroup && this.time < b.laserGroup.solidAt) continue;
       const dx = b.x - p.x;
       const dy = b.y - p.y;
       const dist = Math.hypot(dx, dy);
@@ -1354,9 +1471,16 @@ class DanmakuEngine {
 
   // ── Phase-level persistent beams (Moonlight Ray / taisei lasers) ────────
   // A phase can declare `beams: [{t, dur, x|xn, width, y0, y1, angle,
-  // color, coreColor, unclearable}]`. Each is a thick laser column that
-  // exists for its time window and damages the player on contact, just like
-  // a bullet. `unclearable` beams survive bombs (taisei l->unclearable).
+  // color, coreColor, unclearable, warn}]`. Each is a laser ray that exists
+  // for its time window and damages the player on contact, just like a
+  // bullet. Beams are one-way RAYS: they start at their pivot and extend
+  // forward (toward the segment's y1 end) well past every screen edge —
+  // never backwards behind the shooter — so the player can't slip around
+  // the end of one. Beams are solid immediately by default (sweeping, non-aimed
+  // beams like Moonlight Ray's moonbeams need no warning); set `warn` (sec)
+  // on a beam that aims at the player to make it telegraph first as a thin
+  // pulsing line that does no damage and grants no graze.
+  // `unclearable` beams survive bombs (taisei l->unclearable).
   _activeBeams() {
     const phase = this.phases[this.phaseIndex];
     if (!phase || !phase.beams) return [];
@@ -1364,8 +1488,16 @@ class DanmakuEngine {
     for (const bm of phase.beams) {
       if (bm._cleared) continue;
       const t0 = bm.t || 0;
-      const t1 = bm.dur ? t0 + bm.dur : Infinity;
-      if (this.phaseTime < t0 || this.phaseTime >= t1) continue;
+      if (this.phaseTime < t0) continue;
+      if (bm.period) {
+        // Repeating window: active during [t0 + k*period, t0 + k*period + dur]
+        // (EoSD Moonlight Ray: beams sweep for 2s, rest for 1s, repeat).
+        const cyc = (this.phaseTime - t0) % bm.period;
+        if (cyc >= (bm.dur || Infinity)) continue;
+      } else {
+        const t1 = bm.dur ? t0 + bm.dur : Infinity;
+        if (this.phaseTime >= t1) continue;
+      }
       out.push(bm);
     }
     return out;
@@ -1376,6 +1508,7 @@ class DanmakuEngine {
     if (!p.alive) return;
     const hb = (p.focus ? p.focusHitbox : p.hitbox) / 2;
     for (const bm of this._activeBeams()) {
+      if (this._beamInWarn(bm)) continue; // thin telegraph line: no damage, no graze
       const d = this._beamDist(bm, p.x, p.y);
       const halfW = (bm.width || 40) / 2;
       if (!bm._grazed && d < halfW + hb + 10 && d > halfW + hb) {
@@ -1393,21 +1526,36 @@ class DanmakuEngine {
     }
   }
 
-  // Distance from a point to a beam's centerline segment. The beam is a
-  // rotated rectangle: vertical centerline at x from y0..y1, rotated by
-  // `angle` around its midpoint.
   // Effective beam angle at the current phase time. `bm.sweep` (rad/s) adds
   // a constant rotation rate starting at bm.t — a searchlight-style sweeping
   // beam (Danmakufu laser-sweep patterns). Collision and drawing must agree.
   _beamAngle(bm) {
-    return (bm.angle || 0) + (bm.sweep ? bm.sweep * (this.phaseTime - (bm.t || 0)) : 0);
+    let dt = this.phaseTime - (bm.t || 0);
+    if (bm.period && dt >= 0) dt = dt % bm.period; // restart the sweep each cycle
+    return (bm.angle || 0) + (bm.sweep ? bm.sweep * dt : 0);
   }
-  _beamDist(bm, px, py) {
+  // Beam geometry: a RAY starting at the PIVOT and extending in ONE
+  // direction — toward the segment's y1 end (local +y) or away from it
+  // (local -y) — rotated by _beamAngle. y0/y1 no longer cap the beam
+  // length; they only select the pivot point and the ray's direction:
+  // default pivot is the midpoint of the field; 'top' / 'bottom' pivot at
+  // y0 / y1 — EoSD lasers are rays anchored at the shooter (Moonlight Ray's
+  // beams sweep from the boss, never through the field center), so the
+  // beam must not extend backwards behind the shooter.
+  _beamGeom(bm) {
     const x = bm.xn !== undefined ? bm.xn * this.W : (bm.x !== undefined ? bm.x : this.W / 2);
     const y0 = bm.y0 !== undefined ? bm.y0 : -10;
     const y1 = bm.y1 !== undefined ? bm.y1 : this.H + 10;
-    const mx = x, my = (y0 + y1) / 2;
-    let lx = px - mx, ly = py - my;
+    const py = bm.pivot === 'top' ? y0 : bm.pivot === 'bottom' ? y1 : (y0 + y1) / 2;
+    const dir = y1 >= y0 ? 1 : -1; // ray direction along the local axis
+    return { px: x, py, dir };
+  }
+  // Length used to draw/extend a ray past its pivot — just needs to cover
+  // the whole field at any rotation angle.
+  _rayLen() { return Math.hypot(this.W, this.H) + 40; }
+  _beamDist(bm, px, py) {
+    const g = this._beamGeom(bm);
+    let lx = px - g.px, ly = py - g.py;
     const ang = this._beamAngle(bm);
     if (ang) {
       const c = Math.cos(-ang), s = Math.sin(-ang);
@@ -1415,9 +1563,30 @@ class DanmakuEngine {
       const ny = lx * s + ly * c;
       lx = nx; ly = ny;
     }
-    const lo = y0 - my, hi = y1 - my;
-    const t = Math.max(lo, Math.min(hi, ly));
-    return Math.hypot(lx, ly - t);
+    // Ray, not line: points behind the pivot are outside the beam, so their
+    // distance falls back to the distance to the pivot itself.
+    if (g.dir * ly < 0) return Math.hypot(lx, ly);
+    return Math.abs(lx);
+  }
+  // Time since the beam's current active window began (for repeating windows,
+  // the start of the current cycle's on-phase).
+  _beamAge(bm) {
+    const t0 = bm.t || 0;
+    if (bm.period) {
+      const cyc = (this.phaseTime - t0) % bm.period;
+      return cyc;
+    }
+    return this.phaseTime - t0;
+  }
+  // Warning (telegraph) phase: for the first `warn` seconds of each active
+  // window the beam is a thin, harmless line (EoSD telegraphs aimed lasers
+  // before they grow). Default 0 (solid immediately — sweeping beams that
+  // don't aim at the player need no warning); opt in via bm.warn.
+  _beamInWarn(bm) {
+    const warn = bm.warn !== undefined ? bm.warn : 0;
+    // Epsilon: phaseTime is a float accumulation, so a beam exactly at its
+    // warn boundary must count as solid, not still-warning.
+    return this._beamAge(bm) < warn - 1e-6;
   }
 
   _hitPlayer() {
@@ -1530,38 +1699,50 @@ class DanmakuEngine {
   }
 
   // Draw the active phase-level beams: a soft outer glow, a solid body
-  // (the collision width), and a bright core stripe.
+  // (the collision width), and a bright core stripe — each a one-way ray
+  // from its pivot (never backwards). During the warning phase the beam is
+  // a thin pulsing telegraph ray instead.
   _drawBeams(ctx) {
+    const R = this._rayLen();
     for (const bm of this._activeBeams()) {
-      const x = bm.xn !== undefined ? bm.xn * this.W : (bm.x !== undefined ? bm.x : this.W / 2);
-      const y0 = bm.y0 !== undefined ? bm.y0 : -10;
-      const y1 = bm.y1 !== undefined ? bm.y1 : this.H + 10;
+      const g = this._beamGeom(bm);
       const w = bm.width || 40;
       const color = bm.color || '#fff8c0';
       const core = bm.coreColor || '#ffffff';
       ctx.save();
-      ctx.translate(x, (y0 + y1) / 2);
+      ctx.translate(g.px, g.py);
       const ang = this._beamAngle(bm);
       if (ang) ctx.rotate(ang);
-      const len = y1 - y0;
+      const top = g.dir === 1 ? 0 : -R; // ray extends forward from the pivot only
+      if (this._beamInWarn(bm)) {
+        // Telegraph: thin pulsing ray, no hitbox yet.
+        const pulse = 0.55 + 0.45 * Math.sin(this.phaseTime * 12);
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = color;
+        ctx.fillRect(-1.5, top, 3, R);
+        ctx.restore();
+        continue;
+      }
       // Outer glow (wider than the hitbox — visual only).
       ctx.globalAlpha = 0.18;
       ctx.fillStyle = color;
-      ctx.fillRect(-w, -len / 2, w * 2, len);
+      ctx.fillRect(-w, top, w * 2, R);
       // Body (matches the collision width).
       ctx.globalAlpha = 0.8;
-      ctx.fillRect(-w / 2, -len / 2, w, len);
+      ctx.fillRect(-w / 2, top, w, R);
       // Bright core.
       ctx.globalAlpha = 1;
       ctx.fillStyle = core;
-      ctx.fillRect(-w * 0.18, -len / 2, w * 0.36, len);
+      ctx.fillRect(-w * 0.18, top, w * 0.36, R);
       ctx.restore();
     }
   }
 
   // Render a bullet with a soft glow + bright core, and an optional shape.
   _drawBullet(ctx, b) {
-    const r = b.r;
+    // Laser telegraph: while the beam is still warning it renders as a thin
+    // line (and is disabled in _checkCollisions); once solid it draws full.
+    const r = (b.laserGroup && this.time < b.laserGroup.solidAt) ? b.r * 0.25 : b.r;
     const color = b.color || '#ff5555';
     const shape = b.shape || 'circle';
     const op = b.opacity !== undefined ? b.opacity : 1;

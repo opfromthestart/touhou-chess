@@ -365,6 +365,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Never grow past the viewport: an unbounded panel stretches #app and, via
+     #center's justify-content:center, pushes the board down as the log fills. */
+  max-height: calc(100vh - 32px);
   padding: 14px;
   background: var(--ink);
   border: 1px solid var(--ink-line);
@@ -373,6 +376,8 @@ body {
   backdrop-filter: blur(3px);
 }
 .pcard {
+  /* Fixed (non-shrinking) so the log, not the player cards, absorbs overflow. */
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -409,8 +414,10 @@ body {
 
 /* Fight log (now a normal block inside the side panel) */
 #log-panel {
-  flex: 1 1 auto;
-  min-height: 140px;
+  /* flex-basis 0 + min-height 0 let this panel shrink below its content so the
+     inner #move-log actually scrolls instead of stretching the whole layout. */
+  flex: 1 1 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: rgba(0,0,0,0.25);
@@ -433,6 +440,9 @@ body {
   font-size: 13px;
   overflow-y: auto;
   flex: 1;
+  /* Flex items default to min-height:auto (= their content height), which would
+     defeat the scroll above; 0 lets it shrink and scroll. */
+  min-height: 0;
 }
 #move-log li { padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
 #move-log li .num { color: var(--text-dim); margin-right: 6px; }
@@ -491,7 +501,7 @@ body {
 .chat-send-btn { padding: 8px 14px; font-size: 13px; }
 
 /* In-game controls */
-#controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#controls { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ai-strength-label { font-size: 12px; color: var(--text-dim); }
 #ai-strength {
   background: var(--ink-2);

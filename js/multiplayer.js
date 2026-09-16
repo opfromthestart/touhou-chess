@@ -66,6 +66,7 @@
   let connected = false;
   let helloReceived = false;
   let inputTimer = null;
+  let raceStartTimer = null; // pending "danmaku incoming" beat before a race
   let els = {};
 
   // =========================================================================
@@ -230,6 +231,7 @@
     if (inMultiplayer()) {
       // Tear down any in-flight race so engines/relay don't keep running.
       if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
+      if (raceStartTimer) { clearTimeout(raceStartTimer); raceStartTimer = null; }
       stopEngines();
       closeFightOverlay();
       inRace = false;
@@ -322,6 +324,9 @@
     gameOver = false;
     inRace = false;
     captured = [];
+    // Fresh debug log for this match — PVP games were previously unlogged, so
+    // a buggy PVP game (e.g. "neither player could move") exported an empty log.
+    if (typeof GameLog !== 'undefined') GameLog.clear();
 
     board = new Board();
     board.reset();
@@ -406,6 +411,7 @@
     } else {
       applyMoveToBoard(move, myColor);
       TCNet.send({ type: 'move', move: serializeMove(move) });
+      mpLogTurn(myColor, move, null);
     }
   }
 
@@ -418,6 +424,7 @@
       startRace(move);
     } else {
       applyMoveToBoard(move, oppColor);
+      mpLogTurn(oppColor, move, null);
     }
   }
 
@@ -497,6 +504,63 @@
   }
 
   // =========================================================================
+  // Debug logging (GameLog) — mirrors main.js so a PVP match exports a
+  // replayable log (see js/debug/log.js + replay.js). Without this, a buggy
+  // PVP game (e.g. "neither player could make a move") exports an empty log.
+  // =========================================================================
+
+  // Serialize a move into the replay format main.js's log uses (from/to as
+  // { r, c }), which is what replay.js expects. (The network serializer above
+  // uses { row, col }; this one is for the on-disk log only.)
+  function mpSerializeMove(move) {
+    if (!move) return null;
+    return {
+      from: { r: move.from.row, c: move.from.col },
+      to: { r: move.to.row, c: move.to.col },
+      pieceType: move.piece.type,
+      pieceCharacter: move.piece.character,
+      capturedType: move.captured ? move.captured.type : null,
+      capturedCharacter: move.captured ? move.captured.character : null,
+      flags: {
+        isCastle: move.isCastle || null,
+        isEnPassant: !!move.isEnPassant,
+        isPromotion: !!move.isPromotion,
+        isDoublePawn: !!move.isDoublePawn,
+        castleEnPassant: !!move.castleEnPassant,
+        promotionPiece: move.promotionPiece || null,
+      },
+    };
+  }
+
+  // The contested-capture record for a race turn. `applyCapture` is the field
+  // replay.js actually uses (apply the move vs. remove the capturing piece);
+  // the rest is informational.
+  function mpCaptureInfo(move, attackerColor, applyCapture) {
+    return {
+      bossId: move.captured ? youkaiOf(move.captured) : null,
+      difficulty: 'normal',
+      initiator: attackerColor,
+      playerPieceType: move.piece.type,
+      result: applyCapture ? 'win' : 'lose',
+      applyCapture,
+    };
+  }
+
+  // Record one turn (a move, plus its contested capture if any) to GameLog.
+  function mpLogTurn(side, move, capture) {
+    if (typeof GameLog === 'undefined') return;
+    const ev = GameLog.push('turn', {
+      side,
+      move: mpSerializeMove(move),
+      capture: capture || null,
+      failed: false,
+      reason: null,
+      state: { turn: board.turn, gameOver: board.gameOver, winner: board.winner },
+    });
+    if (typeof console !== 'undefined') console.log('[GameLog]', GameLog.summaryLine(ev));
+  }
+
+  // =========================================================================
   // Danmaku race
   // =========================================================================
   function startRace(move) {
@@ -513,14 +577,25 @@
 
     // Build the two fights (identical on both clients).
     const fights = buildFights(move);
-    startEngines(fights);
 
-    // Relay my input to the opponent while the race runs.
-    if (inputTimer) clearInterval(inputTimer);
-    inputTimer = setInterval(sendInputTick, CONFIG.MP_INPUT_INTERVAL_MS);
+    // Brief beat before the danmaku fires so the DEFENDER isn't blindsided —
+    // the instant their piece is captured, bullets shouldn't already be on
+    // screen. Both clients apply the same beat before the game clock starts,
+    // so it does not affect race resolution or cross-client sync.
+    ui.setTurnIndicator('\u26a1 Capture! Danmaku incoming\u2026');
+    if (raceStartTimer) clearTimeout(raceStartTimer);
+    raceStartTimer = setTimeout(() => {
+      raceStartTimer = null;
+      if (!inRace || !race) return; // torn down (disconnect/leave) during the beat
+      startEngines(fights);
 
-    // Open the dual-screen overlay.
-    openFightOverlay(fights);
+      // Relay my input to the opponent while the race runs.
+      if (inputTimer) clearInterval(inputTimer);
+      inputTimer = setInterval(sendInputTick, CONFIG.MP_INPUT_INTERVAL_MS);
+
+      // Open the dual-screen overlay.
+      openFightOverlay(fights);
+    }, CONFIG.DANMAKU_START_DELAY_MS);
   }
 
   // Compute the two fight parameter sets for a capture move.
@@ -727,6 +802,7 @@
       // Capture goes through.
       sfxPlay('capture');
       applyMoveToBoard(move, race.attackerColor);
+      mpLogTurn(race.attackerColor, move, mpCaptureInfo(move, race.attackerColor, true));
     } else {
       // Capture fails: the capturing piece is removed, turn is consumed.
       board.removePiece(move.from.row, move.from.col);
@@ -739,6 +815,7 @@
       }
       ui.render(board);
       ui.renderTrays(captured);
+      mpLogTurn(race.attackerColor, move, mpCaptureInfo(move, race.attackerColor, false));
     }
     raceCount++;
     TCNet.send({ type: 'race-end', outcome });

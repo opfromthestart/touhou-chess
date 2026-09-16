@@ -69,38 +69,52 @@ const CONFIG = {
   // pattern auto-fires upward and damages the current spell card.
   //
   // Firepower scales with piece VALUE (the plan's "stronger piece = stronger
-  // danmaku character"): king > queen > rook > bishop ~ knight > pawn. Rough
-  // damage-per-second: k 50, q 30, r 24, b 17, n 15, p 6.7. A pawn must NOT
-  // out-damage a king — Cirno gets a single weak ice shard.
+  // danmaku character"): king > queen > rook > bishop > knight > pawn, and the
+  // RANGE stays within 2-3x (king vs pawn) so no piece can skip a card — even
+  // Reimu must survive real danmaku before her shots end the fight.
+  // Rough damage-per-second: k 12, q 10, r 9.2, b 8, n 7.1, p 5.
   SHOT_PATTERNS: {
     k: { // Reimu — five homing Dream-Seal orbs, the strongest firepower.
       // Her normal shot is "usually with homing properties" (wiki): the
       // ofuda/orbs chase the boss on their own.
-      interval: 6, count: 5, spread: 0.5, speed: 9, damage: 1, r: 3,
+      interval: 25, count: 5, spread: 0.5, speed: 9, damage: 1, r: 3,
       color: '#ff5577', shape: 'circle', type: 'homing', turn: 0.06,
     },
     q: { // Marisa — a continuous laser straight up from the ship (her
-      // Illusion Laser / Stream Laser skills; Master Spark lineage).
-      // No discrete bullets: while the beam overlaps the boss it deals
-      // `damage` per frame (0.5 x 60 = 30 DPS, same as before).
-      type: 'laser', damage: 0.5, width: 8,
+      // Illusion Laser / Stream Laser skills; Master Spark lineage). The
+      // beam does most of the damage: while it overlaps the boss it deals
+      // `damage` per frame (0.1 x 60 = 6 DPS). She also fires a 5-star fan
+      // spread +-0.2 rad around straight-up every 60 frames: the stars'
+      // lateral drift (0 / 48 / 99 px out to the boss) tiles the 0-125 px
+      // off-axis range, so while she dodges away from under the beam the
+      // angled stars are her second damage source (verified: ~1 DPS
+      // off-axis where the laser can't reach; ~7 DPS combined on-axis,
+      // below Reimu's 12 — queen < king).
+      type: 'laser', damage: 0.1, width: 8,
       color: '#ffaa33', shape: 'laser',
+      starInterval: 60, starCount: 5, starSpread: 0.4,
+      starSpeed: 10, starDamage: 1, starR: 4,
+      starColor: '#ffcc55', starRotSpeed: 0.15,
     },
     r: { // Sakuya / Youmu — fast, tight piercing stream.
-      interval: 5, count: 2, spread: 0.08, speed: 12, damage: 1, r: 2.5,
+      interval: 13, count: 2, spread: 0.08, speed: 12, damage: 1, r: 2.5,
       color: '#66ccff', shape: 'diamond',
     },
     b: { // Sanae / Reisen — straight lightning bolts. (The old curving bolts
       // drifted off the boss within a second and were basically unusable.)
-      interval: 7, count: 2, spread: 0.1, speed: 11, damage: 1, r: 3,
+      // Spread 0.08 keeps both bolts inside the boss hitbox over the full
+      // field height (wider spreads drift past a centered boss and miss).
+      interval: 15, count: 2, spread: 0.08, speed: 11, damage: 1, r: 3,
       color: '#ff88cc', shape: 'cross',
     },
-    n: { // Aya / Hatate — twin wing shots.
-      interval: 8, count: 2, spread: 0.15, speed: 10, damage: 1, r: 3,
+    n: { // Aya / Hatate — twin wing shots. Spread 0.1: at 0.15 both wings
+      // drifted ~37px off-axis over the field height and never touched a
+      // centered boss, so Aya dealt effectively zero damage.
+      interval: 17, count: 2, spread: 0.1, speed: 10, damage: 1, r: 3,
       color: '#cc99ff', shape: 'petal', rotSpeed: 0.1,
     },
     p: { // Cirno — one weak ice shard; a pawn shouldn't shred spell cards.
-      interval: 9, count: 1, speed: 10, damage: 1, r: 3,
+      interval: 12, count: 1, speed: 10, damage: 1, r: 3,
       color: '#66ddff', shape: 'diamond',
     },
   },
@@ -112,17 +126,23 @@ const CONFIG = {
   PHASE_SECONDS: 18,
 
   // Survival priors: P(you win the fight) per boss, per difficulty.
-  // Adapted at runtime from actual fight results.
+  // Adapted at runtime from actual fight results. Seeds were lowered after
+  // the firepower nerfs: bullet exposure (and death risk) is far higher
+  // than in the original build.
   SURVIVAL_PRIORS: {
-    rumia: { normal: 0.90, lunatic: 0.36 },
-    nitori: { normal: 0.80, lunatic: 0.32 },
-    momiji: { normal: 0.80, lunatic: 0.32 },
-    patchouli: { normal: 0.75, lunatic: 0.30 },
-    alice: { normal: 0.75, lunatic: 0.30 },
-    remilia: { normal: 0.60, lunatic: 0.24 },
-    yuyuko: { normal: 0.60, lunatic: 0.24 },
-    yukari: { normal: 0.45, lunatic: 0.18 },
-    kaguya: { normal: 0.30, lunatic: 0.12 },
+    // Rumia's EoSD-faithful cards are compressed to the ~25s house window
+    // (3 cards Normal / 4 Lunatic => ~75-100s of bullet exposure), but her
+    // patterns are the densest in the game — seeded slightly below
+    // Nitori/Momiji, who have similar total exposure with simpler patterns.
+    rumia: { normal: 0.60, lunatic: 0.18 },
+    nitori: { normal: 0.65, lunatic: 0.22 },
+    momiji: { normal: 0.65, lunatic: 0.22 },
+    patchouli: { normal: 0.60, lunatic: 0.20 },
+    alice: { normal: 0.60, lunatic: 0.20 },
+    remilia: { normal: 0.45, lunatic: 0.15 },
+    yuyuko: { normal: 0.45, lunatic: 0.15 },
+    yukari: { normal: 0.30, lunatic: 0.10 },
+    kaguya: { normal: 0.18, lunatic: 0.07 },
   },
 
   // AI search depth (default strength).
@@ -141,6 +161,13 @@ const CONFIG = {
   // Multiplayer: how often (ms) a player relays its danmaku input state to the
   // opponent so they can run a live spectator copy of your fight.
   MP_INPUT_INTERVAL_MS: 33,
+
+  // Brief beat (ms) between a capture landing and its danmaku fight/race
+  // starting. Without it the defender is blindsided — the bullets are already
+  // on screen the instant their piece is captured. The delay is applied
+  // symmetrically before the game clock starts, so it does not affect race
+  // resolution or cross-client sync.
+  DANMAKU_START_DELAY_MS: 800,
 };
 
 // Export for Node (tests); in the browser CONFIG is a global.

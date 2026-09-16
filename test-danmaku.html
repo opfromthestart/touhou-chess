@@ -125,14 +125,14 @@
   if (Object.keys(e5.keys).length !== 0) fail('stale keys carried into the next fight');
   ok('stale keys do not carry over between fights');
 
-  // --- Focus: hold X (slower ship + smaller hitbox); release to unfocus. ---
+  // --- Focus: hold Shift (slower ship + smaller hitbox); release to unfocus. ---
   const e6 = new DanmakuEngine(canvas, {});
   e6.start(getPhases('rumia', 'normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
-  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
-  if (!e6.player.focus) fail('holding X did not enable focus');
-  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x' }));
-  if (e6.player.focus) fail('releasing X did not disable focus');
-  ok('focus is hold-to-focus (X down/up)');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift' }));
+  if (!e6.player.focus) fail('holding Shift did not enable focus');
+  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Shift' }));
+  if (e6.player.focus) fail('releasing Shift did not disable focus');
+  ok('focus is hold-to-focus (Shift down/up)');
   // Focused ship moves at half speed (update() = exactly one 60fps frame).
   e6.player.x = 240; e6.player.y = 580;
   e6.player.focus = true;

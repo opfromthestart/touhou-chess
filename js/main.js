@@ -190,21 +190,28 @@
       };
     }
     ui.setTurnIndicator('Boss fight!');
-    fight.startFight(bossId, difficulty, playerPieceType, playerChar, (result) => {
-      inFight = false;
-      const playerWon = result === 'win';
-      // Track the fight outcome for the game-over summary.
-      if (playerWon) fightsWon++; else fightsLost++;
-      // Adapt the AI's survival model from the actual outcome.
-      adaptSurvival(bossId, difficulty, playerWon);
-      // Record the outcome + resolution on the in-progress turn.
-      if (currentTurn && currentTurn.capture) {
-        currentTurn.capture.result = result;
-        currentTurn.capture.applyCapture =
-          (initiator === 'player') === playerWon;
-      }
-      resolveCapture(move, initiator, playerWon);
-    });
+    // Brief beat before the danmaku fires so the player isn't blindsided —
+    // especially when the AI just captured one of our pieces (initiator 'ai').
+    // `inFight` is already set, so input/undo are blocked during the beat and
+    // newGame() may stop an un-started engine safely (stop() is a no-op then).
+    setTimeout(() => {
+      if (!inFight) return; // a new game / reset cancelled the pending fight
+      fight.startFight(bossId, difficulty, playerPieceType, playerChar, (result) => {
+        inFight = false;
+        const playerWon = result === 'win';
+        // Track the fight outcome for the game-over summary.
+        if (playerWon) fightsWon++; else fightsLost++;
+        // Adapt the AI's survival model from the actual outcome.
+        adaptSurvival(bossId, difficulty, playerWon);
+        // Record the outcome + resolution on the in-progress turn.
+        if (currentTurn && currentTurn.capture) {
+          currentTurn.capture.result = result;
+          currentTurn.capture.applyCapture =
+            (initiator === 'player') === playerWon;
+        }
+        resolveCapture(move, initiator, playerWon);
+      });
+    }, CONFIG.DANMAKU_START_DELAY_MS);
   }
 
   // Resolve a capture after its fight.
