@@ -1148,46 +1148,138 @@ const BOSSES = {
           duration: 17,
           hp: 130,
           emits: [
-            { t: 0, type: 'aimed', count: 3, spread: 0.2, speed: 3.2, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.4 },
-            { t: 0.3, type: 'ring', count: 14, speed: 1.8, color: '#ffcc66', coreColor: '#fff0d0', shape: 'circle', interval: 1.3 },
-            { t: 0.6, type: 'aimed', count: 5, spread: 0.8, speed: 2.5, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', interval: 0.7 },
+            { t: 0, type: 'aimed', count: 5, spread: 0.24, speed: 3.0, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.4 },
+            { t: 0.4, type: 'ring', count: 16, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1, life: 170 },
+            { t: 0.8, type: 'point', count: 1, speed: 2.4, angleStep: 0.14, color: '#bb88ff', coreColor: '#eeccff', shape: 'petal', trail: true, interval: 0.3 },
           ],
         },
         {
           name: "Jewel from the Dragon's Neck",
-          duration: 18,
+          duration: 25,
           hp: 150,
           emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.5, color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond', interval: 0.5, laserLen: 10 },
-            { t: 0.3, type: 'ring', count: 16, speed: 2.4, color: '#ffcc66', coreColor: '#fff0d0', shape: 'circle', interval: 0.9 },
+            // Five-color laser cross (Sub52): four beams at 90°, each cycling
+            // the five dragon colors as it spins.
+            { t: 0, type: 'laser', count: 1, speed: 2.2, laserLen: 80, angleStep: 0.45, interval: 0.4, warn: 0.35, life: 120,
+              colors: ['#6699ff', '#ff88bb', '#ffaa44', '#bb88ff', '#cc88ff'], colorStep: 0.3,
+              color: '#6699ff', coreColor: '#e0ecff', shape: 'diamond' },
+            { t: 0, type: 'laser', count: 1, speed: 2.2, laserLen: 80, angleOffset: TAU_LOCAL / 4, angleStep: 0.45, interval: 0.4, warn: 0.35, life: 120,
+              colors: ['#ff88bb', '#ffaa44', '#bb88ff', '#cc88ff', '#6699ff'], colorStep: 0.3,
+              color: '#ff88bb', coreColor: '#ffe0ef', shape: 'diamond' },
+            { t: 0, type: 'laser', count: 1, speed: 2.2, laserLen: 80, angleOffset: TAU_LOCAL / 2, angleStep: 0.45, interval: 0.4, warn: 0.35, life: 120,
+              colors: ['#ffaa44', '#bb88ff', '#cc88ff', '#6699ff', '#ff88bb'], colorStep: 0.3,
+              color: '#ffaa44', coreColor: '#fff0d8', shape: 'diamond' },
+            { t: 0, type: 'laser', count: 1, speed: 2.2, laserLen: 80, angleOffset: 3 * TAU_LOCAL / 4, angleStep: 0.45, interval: 0.4, warn: 0.35, life: 120,
+              colors: ['#bb88ff', '#cc88ff', '#6699ff', '#ff88bb', '#ffaa44'], colorStep: 0.3,
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'diamond' },
+            // Arcing rainbow rain (Sub53): hurled upward, falling back with
+            // gravity (source accel 0.0192/frame).
+            { t: 1, type: 'fan', count: 9, spread: 2.4, angle: -Math.PI / 2, speed: 1.5, gravity: 0.03,
+              colors: ['#ff5566', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.3,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.0 },
+            // Rotating double rings (Sub54): speeds 1.1 / 1.5, counter-spin.
+            { t: 2, type: 'ring', count: 32, speed: 1.1, rotStep: 0.1, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.6, life: 180 },
+            { t: 2.85, type: 'ring', count: 32, speed: 1.5, rotStep: -0.1, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.6, life: 180 },
           ],
         },
         {
           name: "Buddha's Stone Bowl",
-          duration: 18,
+          duration: 25,
           hp: 160,
           emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.2, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'diamond', interval: 0.45, laserLen: 8 },
-            { t: 0.2, type: 'aimed', count: 6, spread: 0.6, speed: 3, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 0.4 },
+            // Stop-moon laser sweeps (Sub55-57): a red beam held by the
+            // stone moons, re-aimed 22.5° (TAU/16) each firing.
+            { t: 0, type: 'laser', count: 1, speed: 2.2, laserLen: 440, angleStep: TAU_LOCAL / 16, interval: 3.2, warn: 1.0,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'diamond' },
+            { t: 2.0, type: 'laser', count: 1, speed: 2.2, laserLen: 440, angleStep: -TAU_LOCAL / 16, interval: 3.2, warn: 1.0,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'diamond' },
+            // Escalating micro-spirals (Sub58): two bullets, polar growth.
+            { t: 1, type: 'spiral', arms: 2, rotSpeed: 0.45, speed: 1.8, speedStep: 0.02, interval: 0.06,
+              colors: ['#ffdd88', '#ffffff'], colorStep: 0.4,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', life: 150 },
+            // The unbreakable will (砕けぬ意思): a fast ring that decays
+            // from 4.0 down toward 0.8.
+            { t: 3, type: 'ring', count: 32, speed: 4.0, retention: 0.985, interval: 0.8,
+              color: '#8866ff', coreColor: '#ddccff', shape: 'circle', life: 210 },
+          ],
+        },
+        {
+          name: "Fire Rat's Leather Robe",
+          duration: 25,
+          hp: 170,
+          emits: [
+            // Corner-moon telegraphed lasers (Sub61/64/65): white beams
+            // aimed at the player, fanned across the screen.
+            { t: 0, type: 'laser', count: 1, speed: 2.4, laserLen: 220, interval: 2.0, warn: 1.2,
+              color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
+            { t: 1.0, type: 'laser', count: 1, speed: 2.4, laserLen: 220, angleOffset: 1.05, interval: 2.0, warn: 1.2,
+              color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
+            { t: 2.0, type: 'laser', count: 1, speed: 2.4, laserLen: 220, angleOffset: -1.05, interval: 2.0, warn: 1.2,
+              color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
+            // The heart that does not burn (焦れぬ心, Sub62/63): two
+            // three-bullet flame streams that accelerate, then decay.
+            { t: 1, type: 'aimed', count: 3, spread: 0.3, speed: 2.6, angleStep: 0.2, interval: 0.12,
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', trail: true, life: 180 },
+            { t: 1.1, type: 'aimed', count: 3, spread: 0.3, speed: 2.6, angleStep: -0.2, interval: 0.12,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'star', trail: true, life: 180 },
           ],
         },
         {
           name: "Swallow's Cowrie Shell",
-          duration: 18,
-          hp: 170,
+          duration: 25,
+          hp: 180,
           emits: [
-            { t: 0, type: 'ring', count: 20, speed: 2.6, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', rotSpeed: 0.2, interval: 0.8 },
-            { t: 0.3, type: 'ring', count: 20, speed: 2.6, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', rotSpeed: -0.2, interval: 0.8, rot: Math.PI / 20 },
+            // The Eternity Line (永命線, Sub67/68): the moon hurls a giant
+            // 13-ray ring in two opposite, counter-rotating waves (the source
+            // fires two 13/12-ray circles back-to-back, speed rows 3.0 -> 1.5).
+            { t: 0, type: 'ring', count: 13, speed: 2.8, rotStep: 0.05, aimRing: true,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.5, life: 210 },
+            { t: 0.75, type: 'ring', count: 13, speed: 2.2, rotStep: -0.05, rot: Math.PI / 13,
+              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.5, life: 210 },
+            // Life Spring Infinity (H/L, Sub69): the moon erupts a full-circle
+            // laser burst (52 beams). Approximated as a fast-rotating 12-beam
+            // laser wheel sweeping the screen.
+            { t: 1.6, type: 'laser', count: 1, speed: 2.0, laserLen: 320, angleStep: TAU_LOCAL / 12, interval: 2.4, warn: 1.0,
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'diamond' },
+            // The aimed laser wall (Sub66): a thick beam through the boss,
+            // refired on a slow cadence.
+            { t: 2.4, type: 'laser', count: 1, speed: 2.4, laserLen: 420, interval: 3.2, warn: 1.2,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond' },
           ],
         },
         {
-          name: 'Brilliant Dragon Bullet',
-          duration: 18,
-          hp: 180,
+          name: 'Eternal Night Reversal',
+          duration: 30,
+          hp: 200,
+          noBombs: true,
           emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.5, color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond', interval: 0.4, laserLen: 12 },
-            { t: 0.25, type: 'ring', count: 18, speed: 2.5, color: '#ff6688', coreColor: '#ffd0d8', shape: 'circle', interval: 0.7 },
-            { t: 0.5, type: 'ring', count: 18, speed: 2.5, color: '#66ccff', coreColor: '#d0e8ff', shape: 'circle', interval: 0.7, rot: Math.PI / 18 },
+            // Penglai branch (Sub72-74): counter-rotating 16-ray rings in
+            // dream colors (夢色の郷) — the "rainbow danmaku" (虹色の弾幕).
+            { t: 0, type: 'ring', count: 16, speed: 2.2, rotStep: 0.06, aimRing: true,
+              colors: ['#ff88bb', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.3,
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 1.1, life: 190 },
+            { t: 0.55, type: 'ring', count: 16, speed: 2.2, rotStep: -0.06, rot: Math.PI / 16,
+              colors: ['#66aaff', '#bb88ff', '#ff88bb', '#ffaa44', '#ffee44', '#66ff99'], colorStep: 0.3,
+              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 1.1, life: 190 },
+            // First Moon / Rat Hour (Sub78/81): 8-way aimed circles aimed at
+            // the player, over a 6-arm rotating spiral.
+            { t: 1.2, type: 'spiral', arms: 6, rotSpeed: 0.35, speed: 2.4,
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.09, life: 150 },
+            { t: 1.2, type: 'aimed', count: 9, spread: 0.5, speed: 2.8, angleStep: 0.05, interval: 0.5,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', trail: true },
+            // Ox Hour / Tiger Hour (Sub83/85): fast accelerating rings — the
+            // "tiger hour" surge (source speed 5.0).
+            { t: 2.4, type: 'ring', count: 22, speed: 3.2, speedStep: 0.03, rotStep: 0.04,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.9, life: 170 },
+            { t: 2.4, type: 'fan', count: 11, spread: 1.2, angle: Math.PI / 2, speed: 2.6, angleStep: 0.09, interval: 1.4,
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', trail: true },
+            // Morning Mist / Dawn (Sub88): a storm of drifting random-angle
+            // bullets, escalating in speed (2.0 -> 3.4).
+            { t: 3.6, type: 'homing', count: 5, speed: 2.6, turn: 0.03, interval: 0.35,
+              color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', life: 200 },
+            { t: 3.6, type: 'ring', count: 18, speed: 2.4, rotStep: 0.02, speedStep: 0.02,
+              colors: ['#ffffff', '#bb88ff', '#66aaff', '#ff88bb'], colorStep: 0.25,
+              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', interval: 0.7, life: 220 },
           ],
         },
       ],
@@ -1195,60 +1287,125 @@ const BOSSES = {
         {
           name: 'Non-spell',
           duration: 17,
-          hp: 140,
+          hp: 150,
           emits: [
-            { t: 0, type: 'aimed', count: 4, spread: 0.22, speed: 3.3, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.35 },
-            { t: 0.3, type: 'ring', count: 18, speed: 1.9, color: '#ffcc66', coreColor: '#fff0d0', shape: 'circle', interval: 1.1 },
-            { t: 0.6, type: 'aimed', count: 6, spread: 0.85, speed: 2.6, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', interval: 0.6 },
+            { t: 0, type: 'aimed', count: 5, spread: 0.24, speed: 3.2, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.4 },
+            { t: 0.4, type: 'ring', count: 18, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1, life: 170 },
+            { t: 0.8, type: 'point', count: 1, speed: 2.4, angleStep: 0.14, color: '#bb88ff', coreColor: '#eeccff', shape: 'petal', trail: true, interval: 0.3 },
           ],
         },
         {
-          name: "Jewel from the Dragon's Neck",
-          duration: 18,
-          hp: 160,
-          emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.6, color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond', interval: 0.4, laserLen: 12 },
-            { t: 0.3, type: 'ring', count: 20, speed: 2.5, color: '#ffcc66', coreColor: '#fff0d0', shape: 'circle', interval: 0.75 },
-          ],
-        },
-        {
-          name: "Buddha's Stone Bowl",
-          duration: 18,
+          name: 'Brilliant Dragon Barrette',
+          duration: 25,
           hp: 170,
           emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.3, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'diamond', interval: 0.35, laserLen: 10 },
-            { t: 0.2, type: 'aimed', count: 7, spread: 0.65, speed: 3.1, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 0.35 },
+            // Five-color laser crosses (H/L: denser, faster spin).
+            { t: 0, type: 'laser', count: 1, speed: 2.4, laserLen: 90, angleStep: 0.55, interval: 0.3, warn: 0.35, life: 120,
+              colors: ['#6699ff', '#ff88bb', '#ffaa44', '#bb88ff', '#cc88ff'], colorStep: 0.3,
+              color: '#6699ff', coreColor: '#e0ecff', shape: 'diamond' },
+            { t: 0, type: 'laser', count: 1, speed: 2.4, laserLen: 90, angleOffset: TAU_LOCAL / 4, angleStep: 0.55, interval: 0.3, warn: 0.35, life: 120,
+              colors: ['#ff88bb', '#ffaa44', '#bb88ff', '#cc88ff', '#6699ff'], colorStep: 0.3,
+              color: '#ff88bb', coreColor: '#ffe0ef', shape: 'diamond' },
+            { t: 0, type: 'laser', count: 1, speed: 2.4, laserLen: 90, angleOffset: TAU_LOCAL / 2, angleStep: 0.55, interval: 0.3, warn: 0.35, life: 120,
+              colors: ['#ffaa44', '#bb88ff', '#cc88ff', '#6699ff', '#ff88bb'], colorStep: 0.3,
+              color: '#ffaa44', coreColor: '#fff0d8', shape: 'diamond' },
+            { t: 0, type: 'laser', count: 1, speed: 2.4, laserLen: 90, angleOffset: 3 * TAU_LOCAL / 4, angleStep: 0.55, interval: 0.3, warn: 0.35, life: 120,
+              colors: ['#bb88ff', '#cc88ff', '#6699ff', '#ff88bb', '#ffaa44'], colorStep: 0.3,
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'diamond' },
+            // Arcing rainbow rain (H/L: wider, faster fall).
+            { t: 1, type: 'fan', count: 9, spread: 3.0, angle: -Math.PI / 2, speed: 1.7, gravity: 0.04,
+              colors: ['#ff5566', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.25,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 0.8 },
+            // Rotating double rings (H/L: 40-ring, faster).
+            { t: 2, type: 'ring', count: 40, speed: 1.3, rotStep: 0.12, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.4, life: 180 },
+            { t: 2.85, type: 'ring', count: 40, speed: 1.7, rotStep: -0.12, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.4, life: 180 },
           ],
         },
         {
-          name: "Swallow's Cowrie Shell",
-          duration: 18,
+          name: 'Buddhist Diamond',
+          duration: 25,
           hp: 180,
           emits: [
-            { t: 0, type: 'ring', count: 24, speed: 2.7, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', rotSpeed: 0.22, interval: 0.65 },
-            { t: 0.3, type: 'ring', count: 24, speed: 2.7, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', rotSpeed: -0.22, interval: 0.65, rot: Math.PI / 24 },
+            // Stop-moon laser sweeps (H/L: longer range, faster).
+            { t: 0, type: 'laser', count: 1, speed: 2.4, laserLen: 460, angleStep: TAU_LOCAL / 16, interval: 3.2, warn: 0.9,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'diamond' },
+            { t: 1.9, type: 'laser', count: 1, speed: 2.4, laserLen: 460, angleStep: -TAU_LOCAL / 16, interval: 3.2, warn: 0.9,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'diamond' },
+            // Escalating micro-spirals (H/L: 3 arms, faster growth).
+            { t: 1, type: 'spiral', arms: 3, rotSpeed: 0.5, speed: 2.0, speedStep: 0.03, interval: 0.05,
+              colors: ['#ffdd88', '#ffffff'], colorStep: 0.3,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', life: 150 },
+            // The unbreakable will (H/L: faster decay ring).
+            { t: 3, type: 'ring', count: 40, speed: 4.4, retention: 0.985, interval: 0.7,
+              color: '#8866ff', coreColor: '#ddccff', shape: 'circle', life: 210 },
           ],
         },
         {
-          name: 'Brilliant Dragon Bullet',
-          duration: 18,
+          name: 'Salamander Shield',
+          duration: 25,
           hp: 190,
           emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.6, color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond', interval: 0.35, laserLen: 14 },
-            { t: 0.25, type: 'ring', count: 22, speed: 2.6, color: '#ff6688', coreColor: '#ffd0d8', shape: 'circle', interval: 0.55 },
-            { t: 0.5, type: 'ring', count: 22, speed: 2.6, color: '#66ccff', coreColor: '#d0e8ff', shape: 'circle', interval: 0.55, rot: Math.PI / 22 },
+            // Corner-moon telegraphed lasers (H/L: 4 beams, faster).
+            { t: 0, type: 'laser', count: 1, speed: 2.8, laserLen: 240, interval: 1.6, warn: 1.0,
+              color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
+            { t: 0.7, type: 'laser', count: 1, speed: 2.8, laserLen: 240, angleOffset: 1.05, interval: 1.6, warn: 1.0,
+              color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
+            { t: 1.4, type: 'laser', count: 1, speed: 2.8, laserLen: 240, angleOffset: -1.05, interval: 1.6, warn: 1.0,
+              color: '#ffffff', coreColor: '#fff8e0', shape: 'diamond' },
+            // The heart that does not burn (H/L: 5-bullet fans, faster).
+            { t: 1, type: 'aimed', count: 5, spread: 0.34, speed: 2.9, angleStep: 0.22, interval: 0.1,
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', trail: true, life: 180 },
+            { t: 1.1, type: 'aimed', count: 5, spread: 0.34, speed: 2.9, angleStep: -0.22, interval: 0.1,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'star', trail: true, life: 180 },
           ],
         },
         {
-          name: 'End of Imperishable Night',
-          duration: 20,
+          name: 'Life Spring Infinity',
+          duration: 25,
           hp: 200,
+          emits: [
+            // The Eternity Line (H/L: 17-ray, faster waves).
+            { t: 0, type: 'ring', count: 17, speed: 3.2, rotStep: 0.06, aimRing: true,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.2, life: 210 },
+            { t: 0.75, type: 'ring', count: 17, speed: 2.5, rotStep: -0.06, rot: Math.PI / 17,
+              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.2, life: 210 },
+            // Life Spring Infinity (H/L: 16-beam laser wheel, faster).
+            { t: 1.6, type: 'laser', count: 1, speed: 2.4, laserLen: 360, angleStep: TAU_LOCAL / 16, interval: 2.0, warn: 0.9,
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'diamond' },
+            // The aimed laser wall (H/L: faster).
+            { t: 2.4, type: 'laser', count: 1, speed: 2.8, laserLen: 460, interval: 2.6, warn: 1.0,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond' },
+          ],
+        },
+        {
+          name: 'Eternal Night Reversal',
+          duration: 30,
+          hp: 220,
           noBombs: true,
           emits: [
-            { t: 0, type: 'ring', count: 24, speed: 2.8, color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 0.6 },
-            { t: 0.3, type: 'spiral', arms: 4, rotSpeed: 0.3, speed: 2.6, color: '#ffcc66', coreColor: '#fff0d0', shape: 'rice', interval: 0.1 },
-            { t: 0.6, type: 'aimed', count: 6, spread: 0.5, speed: 3.2, color: '#ffaa44', coreColor: '#ffe8c0', shape: 'star', interval: 0.4 },
-            { t: 0.9, type: 'laser', count: 1, speed: 3.5, color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond', interval: 0.45, laserLen: 12 },
+            // Penglai Jade Branch (H/L: 20-ray dream-color rings, faster).
+            { t: 0, type: 'ring', count: 20, speed: 2.5, rotStep: 0.07, aimRing: true,
+              colors: ['#ff88bb', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.25,
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 0.9, life: 190 },
+            { t: 0.5, type: 'ring', count: 20, speed: 2.5, rotStep: -0.07, rot: Math.PI / 20,
+              colors: ['#66aaff', '#bb88ff', '#ff88bb', '#ffaa44', '#ffee44', '#66ff99'], colorStep: 0.25,
+              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 0.9, life: 190 },
+            // First Moon / Rat Hour (H/L: 8-arm spiral + 11-way aimed).
+            { t: 1.1, type: 'spiral', arms: 8, rotSpeed: 0.42, speed: 2.6,
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.07, life: 150 },
+            { t: 1.1, type: 'aimed', count: 11, spread: 0.55, speed: 3.0, angleStep: 0.06, interval: 0.4,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', trail: true },
+            // Ox / Tiger Hour (H/L: faster accelerating rings + fans).
+            { t: 2.2, type: 'ring', count: 26, speed: 3.6, speedStep: 0.04, rotStep: 0.05,
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.75, life: 170 },
+            { t: 2.2, type: 'fan', count: 13, spread: 1.4, angle: Math.PI / 2, speed: 2.9, angleStep: 0.1, interval: 1.2,
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', trail: true },
+            // Morning Mist / Dawn (H/L: denser random storm).
+            { t: 3.4, type: 'homing', count: 7, speed: 2.9, turn: 0.035, interval: 0.28,
+              color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', life: 200 },
+            { t: 3.4, type: 'ring', count: 22, speed: 2.7, rotStep: 0.03, speedStep: 0.03,
+              colors: ['#ffffff', '#bb88ff', '#66aaff', '#ff88bb'], colorStep: 0.2,
+              color: '#ffffff', coreColor: '#ffffff', shape: 'circle', interval: 0.6, life: 220 },
           ],
         },
       ],

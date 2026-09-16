@@ -9,5 +9,11 @@ taisei/
 bin/
 lib/
 
+*.mid
+*.anm
+*.std
+*.wav
+*.ecl
+
 # Headless Chromium scratch (dom dumps + screenshots from test runs).
 .chromium-profile/
