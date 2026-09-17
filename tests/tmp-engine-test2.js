@@ -488,5 +488,140 @@ section('Practice mode per-card stats (moved + closest bullet)');
   assert(typeof f.phaseStats[f.phaseIndex].avgDist === 'number', '_end finalizes the active card');
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+section('Rice orientation (grains point along direction of travel)');
+{
+  // Canvas whose ctx records every method call, so we can inspect the
+  // rotation _drawBullet applied to a bullet.
+  function recordingCtx() {
+    const calls = [];
+    const grad = { addColorStop() {} };
+    const target = {};
+    const ctx = new Proxy(target, {
+      get(t, p) {
+        if (p === 'createLinearGradient' || p === 'createRadialGradient' || p === 'createPattern') return () => grad;
+        if (p in t) return t[p];
+        if (typeof p === 'string') {
+          t[p] = (...args) => { calls.push([p, ...args]); return undefined; };
+          return t[p];
+        }
+        return undefined;
+      },
+      set(t, p, v) { t[p] = v; return true; },
+    });
+    return { ctx, calls };
+  }
+  const lastRotate = calls => {
+    for (let i = calls.length - 1; i >= 0; i--) if (calls[i][0] === 'rotate') return calls[i][1];
+    return null;
+  };
+  const e = mkEngine();
+
+  // Rice grain flying along +x: ellipse is elongated along local +Y, so the
+  // draw rotation must be atan2(0, 5) - PI/2 = -PI/2.
+  {
+    const b = makeBullet(100, 100, 5, 0, { r: 6, shape: 'rice', color: '#fff' });
+    const { ctx, calls } = recordingCtx();
+    e._drawBullet(ctx, b);
+    assert(Math.abs(lastRotate(calls) - (-Math.PI / 2)) < 1e-9, 'rice facing +x rotates by -PI/2 (got ' + lastRotate(calls) + ')');
+  }
+  // Arbitrary direction (4,3).
+  {
+    const b = makeBullet(100, 100, 4, 3, { r: 6, shape: 'rice', color: '#fff' });
+    const { ctx, calls } = recordingCtx();
+    e._drawBullet(ctx, b);
+    const want = Math.atan2(3, 4) - Math.PI / 2;
+    assert(Math.abs(lastRotate(calls) - want) < 1e-9, 'rice facing (4,3) rotates by atan2(3,4)-PI/2 (got ' + lastRotate(calls) + ', want ' + want + ')');
+  }
+  // Stationary rice falls back to b.rot.
+  {
+    const b = makeBullet(100, 100, 0, 0, { r: 6, shape: 'rice', color: '#fff', rot: 0.7 });
+    const { ctx, calls } = recordingCtx();
+    e._drawBullet(ctx, b);
+    assert(Math.abs(lastRotate(calls) - 0.7) < 1e-9, 'stationary rice uses b.rot');
+  }
+  // Regression: non-rice shapes keep their in-place spin untouched.
+  {
+    const b = makeBullet(100, 100, 4, 3, { r: 6, shape: 'diamond', color: '#fff', rot: 0.5 });
+    const { ctx, calls } = recordingCtx();
+    e._drawBullet(ctx, b);
+    assert(Math.abs(lastRotate(calls) - 0.5) < 1e-9, 'non-rice bullets still rotate by b.rot');
+  }
+  // Regression: plain unrotated circles take the fast path (no rotate call).
+  {
+    const b = makeBullet(100, 100, 4, 3, { r: 6, shape: 'circle', color: '#fff' });
+    const { ctx, calls } = recordingCtx();
+    e._drawBullet(ctx, b);
+    assert(lastRotate(calls) === null, 'plain circle fast path issues no rotate');
+  }
+}
+
+section('Curve movers track their orbit (velocity follows the turn)');
+{
+  // Direct curve bullet: each frame vx/vy must equal the actual displacement,
+  // and the heading must stop pointing radially outward (pre-fix it was the
+  // frozen spawn direction, i.e. 100% radial).
+  {
+    const e = mkEngine();
+    const b = makeBullet(240, 320, 0, 0, { type: 'curve', cx: 240, cy: 320, sa: 0, sr: 0, cspeed: 2, curve: 0.05, r: 6, shape: 'rice' });
+    e.bullets = [b];
+    let dispBad = 0, radialBad = 0;
+    for (let i = 0; i < 60; i++) {
+      const px = b.x, py = b.y;
+      e._updateBullets();
+      if (!b.active) break;
+      if (Math.abs(b.vx - (b.x - px)) > 1e-9 || Math.abs(b.vy - (b.y - py)) > 1e-9) dispBad++;
+      if (b.sr > 30) {
+        const rx = b.x - b.cx, ry = b.y - b.cy;
+        const d = Math.hypot(rx, ry), sp = Math.hypot(b.vx, b.vy);
+        const radialFrac = (b.vx * rx + b.vy * ry) / (d * sp);
+        if (radialFrac > 0.99) radialBad++;
+      }
+    }
+    assert(dispBad === 0, 'curve bullet vx/vy equals its per-frame displacement every frame');
+    assert(radialBad === 0, 'curve bullet heading is not radially outward once the orbit has room');
+  }
+  // End-to-end: a spinning ring (the Cowrie-shell mechanic, synthetic params).
+  // Each bullet's HEADING must rotate with its orbit — before the fix vx/vy
+  // was the frozen spawn direction, so the heading never changed at all.
+  {
+    const e = mkEngine();
+    e.phases[0].emits = [{ t: 0, type: 'ring', count: 8, speed: 2, spin: 0.25, shape: 'rice', interval: 99 }];
+    e._emitPattern();
+    assert(e.bullets.length === 8, 'spin ring fired 8 bullets');
+    for (let i = 0; i < 40 && e.bullets[0] && e.bullets[0].sr <= 20; i++) e._updateBullets();
+    const bearings = e.bullets.map(b => Math.atan2(b.vy, b.vx));
+    for (let i = 0; i < 60; i++) e._updateBullets(); // 1s of orbiting
+    let bad = 0;
+    e.bullets.forEach((b, i) => {
+      if (!b.active) return;
+      const d = Math.abs(Math.atan2(b.vy, b.vx) - bearings[i]);
+      if (d < 0.1) bad++; // spin 0.25 rad/s -> ~0.25 rad of heading change in 1s
+    });
+    assert(bad === 0, 'spin-ring bullet headings rotate with the orbit (not frozen at spawn direction)');
+  }
+}
+
+section('Spiral arm-sweep rate does not leak onto bullets');
+{
+  // em.rotSpeed on a spiral is the ARM SWEEP rate; it must not be copied as
+  // an in-place visual spin onto the bullets (it used to be, making rice
+  // grains spin in place instead of pointing along the spiral).
+  {
+    const e = mkEngine();
+    e.phases[0].emits = [{ t: 0, type: 'spiral', arms: 3, rotSpeed: 0.3, speed: 2, shape: 'rice', interval: 0.5 }];
+    e._emitPattern();
+    assert(e.bullets.length === 3, 'spiral fired one bullet per arm');
+    assert(e.bullets.every(b => !b.rotSpeed), 'no in-place spin leaked onto spiral bullets');
+  }
+  // Regression: other emitters (rings) DO use em.rotSpeed as genuine spin.
+  {
+    const e = mkEngine();
+    e.phases[0].emits = [{ t: 0, type: 'ring', count: 4, speed: 2, shape: 'diamond', rotSpeed: 0.1, interval: 5 }];
+    e._emitPattern();
+    assert(e.bullets.every(b => b.rotSpeed === 0.1), 'ring emitters keep genuine in-place spin');
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

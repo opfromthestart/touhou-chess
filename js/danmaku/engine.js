@@ -770,9 +770,13 @@ class DanmakuEngine {
       case 'spiral': {
         const arms = em.arms || 1;
         const rot = (em.rotSpeed || 0.3) * this.phaseTime;
+        // em.rotSpeed here is the ARM SWEEP rate, not a per-bullet visual
+        // spin — strip it so _add doesn't copy it onto every bullet
+        // (other emitters use em.rotSpeed as genuine in-place spin).
+        const emNoSpin = Object.assign({}, em, { rotSpeed: undefined });
         for (let a = 0; a < arms; a++) {
           const ang = rot + (a / arms) * TAU;
-          this._add(ox, oy, ang, speed, em);
+          this._add(ox, oy, ang, speed, emNoSpin);
         }
         break;
       }
@@ -1334,8 +1338,15 @@ class DanmakuEngine {
       // the velocity alone would just orbit the boss in a circle.)
       b.sa += b.curve;
       b.sr += b.cspeed;
-      b.x = b.cx + Math.cos(b.sa) * b.sr;
-      b.y = b.cy + Math.sin(b.sa) * b.sr;
+      const nx = b.cx + Math.cos(b.sa) * b.sr;
+      const ny = b.cy + Math.sin(b.sa) * b.sr;
+      // Keep vx/vy as the ACTUAL per-frame displacement so the bullet's
+      // heading (rice orientation, motion trails) follows the orbit instead
+      // of pointing along the frozen spawn direction.
+      b.vx = nx - b.x;
+      b.vy = ny - b.y;
+      b.x = nx;
+      b.y = ny;
     } else {
       if (b.turn) this._bank(b, b.turn);   // constant banking arc
       if (b.gravity) b.vy += b.gravity;    // icicle / parabolic fall
@@ -1966,7 +1977,14 @@ class DanmakuEngine {
     }
     ctx.save();
     ctx.translate(b.x, b.y);
-    if (b.rot) ctx.rotate(b.rot);
+    if (shape === 'rice') {
+      // Rice grains always point along their direction of travel (the
+      // ellipse is elongated along local +Y, hence -PI/2). Stationary
+      // bullets fall back to b.rot.
+      const spd = Math.hypot(b.vx, b.vy);
+      if (spd > 0.01) ctx.rotate(Math.atan2(b.vy, b.vx) - Math.PI / 2);
+      else if (b.rot) ctx.rotate(b.rot);
+    } else if (b.rot) ctx.rotate(b.rot);
     ctx.globalAlpha = 0.3 * op;
     ctx.fillStyle = color;
     ctx.beginPath();
