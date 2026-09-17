@@ -489,6 +489,14 @@ class DanmakuEngine {
     // Boss movement modes:
     //  sine    — gentle horizontal bob (default)
     //  still   — fixed at top-center
+    //  slide   — Touhou-style: hold still while shooting, then quickly slide
+    //            to a new position and hold again. The cycle restarts at
+    //            every spell card, so each card opens with the boss static
+    //            (stable origin for the opening volley — e.g. Kaguya's
+    //            Cowrie Shell lasers + aimTime fan). Targets come from the
+    //            seeded RNG, so a fight always slides identically.
+    //            Params: holdDur (s, default 3), slideDur (s, default 0.6),
+    //            slideDist (px, default 140).
     //  circle  — orbit around a center point (Rumia / Cirno style)
     //  erratic — Taisei-style free roam: a damped velocity is pulled by a
     //            spring toward a drifting target (move_from_towards +
@@ -498,6 +506,38 @@ class DanmakuEngine {
       b.x = this.W / 2 + Math.sin(this.time * (b.moveSpeed || 0.8)) * (b.moveAmp || 60);
     } else if (b.move === 'still') {
       b.x = this.W / 2;
+    } else if (b.move === 'slide') {
+      // Re-arm the hold/slide cycle at every phase change (phaseIndex flip)
+      // so each card starts with the boss holding still at its current spot.
+      if (!b._sl || b._sl.pi !== this.phaseIndex) {
+        b._sl = { pi: this.phaseIndex, x: b.x, y: b.y, t: 0, holding: true,
+                  sx: b.x, sy: b.y, tx: b.x, ty: b.y };
+      }
+      const s = b._sl;
+      const holdDur = b.holdDur !== undefined ? b.holdDur : 3;
+      const slideDur = b.slideDur !== undefined ? b.slideDur : 0.6;
+      s.t += this.step / 1000;
+      if (s.holding) {
+        b.x = s.x; b.y = s.y;
+        if (s.t >= holdDur) {
+          const dist = b.slideDist || 140;
+          s.sx = s.x; s.sy = s.y;
+          s.tx = Math.max(20, Math.min(this.W - 20, s.x + (this._rnd() * 2 - 1) * dist));
+          s.ty = Math.max(20, Math.min(this.H * 0.5, s.y + (this._rnd() * 2 - 1) * dist * 0.4));
+          s.t = 0;
+          s.holding = false;
+        }
+      } else {
+        const k = Math.min(1, s.t / slideDur);
+        const e = k * k * (3 - 2 * k); // smoothstep: eases out of the hold
+        b.x = s.sx + (s.tx - s.sx) * e;
+        b.y = s.sy + (s.ty - s.sy) * e;
+        if (k >= 1) {
+          s.x = s.tx; s.y = s.ty;
+          s.t = 0;
+          s.holding = true;
+        }
+      }
     } else if (b.move === 'circle') {
       const r = b.moveAmp || 60;
       const w = b.moveSpeed || 0.8;

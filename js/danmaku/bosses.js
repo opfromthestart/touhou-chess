@@ -635,9 +635,8 @@ const BOSSES = {
     color: '#55ccff',
     bgTop: '#061420',
     bgBottom: '#020810',
-    move: 'sine',
-    moveAmp: 65,
-    moveSpeed: 0.7,
+    move: 'slide',
+    holdDur: 2.5, slideDur: 0.5, slideDist: 150,
     phases: {
       normal: [
         {
@@ -744,9 +743,8 @@ const BOSSES = {
     color: '#77aaff',
     bgTop: '#0a1020',
     bgBottom: '#04060c',
-    move: 'sine',
-    moveAmp: 45,
-    moveSpeed: 1.1,
+    move: 'slide',
+    holdDur: 3, slideDur: 0.6, slideDist: 120,
     phases: {
       normal: [
         {
@@ -824,9 +822,7 @@ const BOSSES = {
     color: '#cc88ff',
     bgTop: '#140a20',
     bgBottom: '#08040e',
-    move: 'sine',
-    moveAmp: 40,
-    moveSpeed: 0.7,
+    move: 'still',
     phases: {
       normal: [
         {
@@ -904,9 +900,8 @@ const BOSSES = {
     color: '#cc66ff',
     bgTop: '#1a0a24',
     bgBottom: '#0a0410',
-    move: 'sine',
-    moveAmp: 50,
-    moveSpeed: 0.8,
+    move: 'slide',
+    holdDur: 3, slideDur: 0.6, slideDist: 130,
     phases: {
       normal: [
         {
@@ -984,9 +979,8 @@ const BOSSES = {
     color: '#ff3344',
     bgTop: '#1e0810',
     bgBottom: '#0a0406',
-    move: 'sine',
-    moveAmp: 60,
-    moveSpeed: 0.85,
+    move: 'slide',
+    holdDur: 2.5, slideDur: 0.55, slideDist: 140,
     phases: {
       normal: [
         {
@@ -1082,9 +1076,7 @@ const BOSSES = {
     color: '#6688ff',
     bgTop: '#0a0e24',
     bgBottom: '#04060e',
-    move: 'sine',
-    moveAmp: 50,
-    moveSpeed: 0.75,
+    move: 'still',
     phases: {
       normal: [
         {
@@ -1184,9 +1176,8 @@ const BOSSES = {
     color: '#8844cc',
     bgTop: '#120820',
     bgBottom: '#06040c',
-    move: 'sine',
-    moveAmp: 70,
-    moveSpeed: 1,
+    move: 'slide',
+    holdDur: 3, slideDur: 0.6, slideDist: 160,
     phases: {
       normal: [
         {
@@ -1284,9 +1275,11 @@ const BOSSES = {
     color: '#ffdd88',
     bgTop: '#1a1428',
     bgBottom: '#0a0812',
-    move: 'sine',
-    moveAmp: 65,
-    moveSpeed: 0.9,
+    // Slide (not sine): the Cowrie Shell coordinates its t=1.6 lasers with
+    // the t=2.6 aimTime fan, so the boss must be static during that opening
+    // volley. holdDur 3 keeps it still until both have fired.
+    move: 'slide',
+    holdDur: 3, slideDur: 0.6, slideDist: 120,
     phases: {
       normal: [
         {
@@ -1711,9 +1704,8 @@ const BOSSES = {
     color: '#bb88ff',
     bgTop: '#1a1028',
     bgBottom: '#0a0614',
-    move: 'sine',
-    moveAmp: 55,
-    moveSpeed: 0.7,
+    move: 'slide',
+    holdDur: 3, slideDur: 0.6, slideDist: 160,
     phases: {
       normal: [
         {
