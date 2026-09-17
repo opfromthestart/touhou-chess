@@ -1436,7 +1436,17 @@ const BOSSES = {
               t: 1.6, type: 'laser', count: 1, speed: 0, laserLen: 700, interval: 3.2, warn: 1, angleOffset: -TAU_LOCAL/36,
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond'
             },
-            {t: 2.6, type: 'fan', count: 120, speed: 3, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.2, period: 0.1, repeat: 5, angleOffset: TAU_LOCAL/2, aimTime: 1.6}
+            // The red fan (Sub66): a 120-bullet fan covering 17/18 of the
+            // circle, centered on the anti-player direction so its 1/18-TAU
+            // GAP points at the player's t=1.6 position (aimTime). A second
+            // identical fan is shifted by exactly HALF A BULLET-PITCH
+            // (spread/(count-1)/2 = TAU/252), so every one of its bullets
+            // lands dead-center in a gap of the first fan. The two waves
+            // interlock into one 240-bullet fan whose gaps are half as wide
+            // — much harder to thread — while the big safe pocket at the aim
+            // point stays open (~18.6° instead of 20°).
+            {t: 2.6, type: 'fan', count: 120, speed: 5, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.2, angleOffset: TAU_LOCAL/2, aimTime: 1.6},
+            {t: 2.6, type: 'fan', count: 120, speed: 5, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.2, angleOffset: TAU_LOCAL/2 + TAU_LOCAL/252, aimTime: 1.6}
           ],
         },
         {
