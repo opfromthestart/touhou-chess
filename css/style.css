@@ -611,6 +611,26 @@ button:active { transform: translateY(1px); }
   background: rgba(245,197,66,0.12);
   box-shadow: 0 0 10px rgba(245,197,66,0.3);
 }
+/* Spell-card picker: "All cards" + one button per boss card for the current
+   difficulty. Same look as the difficulty buttons, smaller. */
+.practice-spell-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.practice-spell-btn {
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 2px solid var(--ink-line-soft);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  box-shadow: none;
+}
+.practice-spell-btn:hover { border-color: var(--ink-line); }
+.practice-spell-btn.selected {
+  border-color: var(--accent-2);
+  background: rgba(245,197,66,0.12);
+  box-shadow: 0 0 10px rgba(245,197,66,0.3);
+}
 .practice-loadout {
   font-size: 13px;
   color: var(--text-dim);

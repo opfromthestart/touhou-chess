@@ -441,3 +441,10 @@ Cirno is an ice fairy with a simple, iconic design that reflects her powers and 
 *   **Bullet Patterns & Shooting**: Cirno's danmaku is all about **ice**. She is noted as the first Windows-era boss to use **random bullets**. Her patterns include firing **icicles**, creating expanding circles of dot and ice bullets, and using her signature spell card, **"Perfect Freeze,"** which can **freeze and erase all bullets on screen**. In *Fairy Wars*, this freezing mechanic is central to the gameplay. Her shots are typically ice shards, icicles, or hail, with a focus on free-form patterns and the ability to freeze and control the battlefield.
 
 If you'd like a deeper dive into any specific spell card or game appearance, feel free to ask.
+
+The site looks very generic, aka looks like every AI generated site, give it some polish/theme. Here is an example UI that you may want to use.
+
+When you focus, it removes the hitbox circle, where it should probably be the other way around. There is also no timer to tell when a spell card would end if you dont do enough damage.
+
+Add multiplayer using peerjs I think, it should be like phantasmagoria of flower view where each plays the boss of the other, and whoever loses first has their piece removed. It should stay similar to the AI version, in that the white pieces should just use the black piece bosses for black. It should show both screens to both players, so they can see how the other is doing. It should have some way of increasing difficulty over time so eventually one player must lose.
+

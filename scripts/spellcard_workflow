@@ -1,0 +1,6 @@
+1.Read refs/stages/spell_card_descriptions.md to get approximate locations of each spell card for the given boss in the videos.
+2.Scan the frames at 3fps to find potential spell card locations.
+3.Scan around each spell card location at 1fps to get spell card names and duration(usually top right of the first spell card frame).
+4.Within each spell card, make a montage at 4fps to identify the timing of bullet group spawns, bullet colors and shape. 
+5.Within each bullet group, analyze at 15fps to get detailed info on timing and how the bullets move. Be detailed enough in this stage that the spell could be reimplemented from the description.
+6.Save this description back into spell_card_descriptions.md

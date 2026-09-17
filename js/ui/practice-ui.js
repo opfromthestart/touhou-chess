@@ -3,7 +3,8 @@
 // no fight stats, no AI survival-model adaptation.
 //
 // The menu is a modal with two character grids (protagonists / bosses), a
-// Normal/Lunatic toggle, and a Start button. Selecting a protagonist also
+// Normal/Lunatic toggle, a spell-card picker (play the full fight or just one
+// of the boss's cards), and a Start button. Selecting a protagonist also
 // selects their piece type (stats + shot pattern come from the piece).
 
 class PracticeUI {
@@ -13,6 +14,10 @@ class PracticeUI {
     this.playerChar = 'reimu';
     this.bossId = 'rumia';
     this.difficulty = 'normal';
+    // null = full fight (all cards); otherwise a 0-based index into the
+    // boss's phase list for the current difficulty.
+    this.spellIndex = null;
+    this._spellListKey = null; // cache key for the built spell-card buttons
     this._build();
     // main.js sets this: ({bossId, difficulty, playerPieceType, playerChar}) => void
     this.onSelect = null;
@@ -36,6 +41,10 @@ class PracticeUI {
           <div class="practice-grid" id="practice-boss-grid"></div>
         </div>
         <div class="practice-section">
+          <div class="practice-label">Spell Card</div>
+          <div class="practice-spell-list" id="practice-spell-list"></div>
+        </div>
+        <div class="practice-section">
           <div class="practice-label">Difficulty</div>
           <div class="practice-diff">
             <button type="button" class="practice-diff-btn" id="practice-diff-normal">Normal</button>
@@ -53,6 +62,7 @@ class PracticeUI {
     this.modal = modal;
     this.playerGrid = modal.querySelector('#practice-player-grid');
     this.bossGrid = modal.querySelector('#practice-boss-grid');
+    this.spellList = modal.querySelector('#practice-spell-list');
     this.loadoutEl = modal.querySelector('#practice-loadout');
     this.diffBtns = {
       normal: modal.querySelector('#practice-diff-normal'),
@@ -70,10 +80,12 @@ class PracticeUI {
 
     this.diffBtns.normal.addEventListener('click', () => {
       this.difficulty = 'normal';
+      this.spellIndex = null; // the card list changes with difficulty
       this._refresh();
     });
     this.diffBtns.lunatic.addEventListener('click', () => {
       this.difficulty = 'lunatic';
+      this.spellIndex = null; // the card list changes with difficulty
       this._refresh();
     });
     modal.querySelector('#btn-practice-start').addEventListener('click', () => {
@@ -104,20 +116,57 @@ class PracticeUI {
     btn.appendChild(name);
     btn.appendChild(typeEl);
     btn.addEventListener('click', () => {
-      if (role === 'player') this.playerChar = char;
-      else this.bossId = char;
+      if (role === 'player') {
+        this.playerChar = char;
+      } else {
+        this.bossId = char;
+        this.spellIndex = null; // a different boss has a different card list
+      }
       this._refresh();
     });
     return btn;
   }
 
-  // Current selection, resolved to what startFight needs.
+  // One spell-card picker button. index: null = "All cards" (full fight),
+  // otherwise a 0-based index into the boss's phase list.
+  _spellButton(label, index) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'practice-spell-btn';
+    btn.dataset.index = index == null ? 'all' : String(index);
+    btn.textContent = label;
+    btn.title = label;
+    btn.addEventListener('click', () => {
+      this.spellIndex = index;
+      this._refresh();
+    });
+    return btn;
+  }
+
+  // (Re)build the spell-card picker for the current boss + difficulty.
+  // Rebuilt only when the pair changes; selection is re-applied in _refresh().
+  _rebuildSpellList() {
+    const key = this.bossId + '|' + this.difficulty;
+    if (key === this._spellListKey) return;
+    this._spellListKey = key;
+    this.spellList.innerHTML = '';
+    const phases = getPhases(this.bossId, this.difficulty);
+    this.spellList.appendChild(
+      this._spellButton('All cards (' + phases.length + ')', null));
+    phases.forEach((ph, i) => {
+      this.spellList.appendChild(this._spellButton((i + 1) + '. ' + ph.name, i));
+    });
+  }
+
+  // Current selection, resolved to what startFight needs. spellIndex is null
+  // for a full fight or a 0-based index into the boss's phase list.
   selection() {
     return {
       bossId: this.bossId,
       difficulty: this.difficulty,
       playerPieceType: charToPieceType(this.playerChar),
       playerChar: this.playerChar,
+      spellIndex: this.spellIndex,
     };
   }
 
@@ -131,12 +180,21 @@ class PracticeUI {
     for (const d of ['normal', 'lunatic']) {
       this.diffBtns[d].classList.toggle('selected', d === this.difficulty);
     }
+    this._rebuildSpellList();
+    for (const b of this.spellList.children) {
+      const idx = b.dataset.index === 'all' ? null : Number(b.dataset.index);
+      b.classList.toggle('selected', idx === this.spellIndex);
+    }
     const type = charToPieceType(this.playerChar);
     const stats = CONFIG.DANMAKU_STATS[type];
+    const phases = getPhases(this.bossId, this.difficulty);
+    const card = this.spellIndex != null && phases[this.spellIndex]
+      ? `only "${phases[this.spellIndex].name}"`
+      : `all ${phases.length} cards`;
     this.loadoutEl.textContent =
       `${CONFIG.CHARACTERS[this.playerChar]} (${PRACTICE_PIECE_NAMES[type]}) — ` +
       `${stats.lives} life${stats.lives > 1 ? 's' : ''} · ${stats.bombs} bomb${stats.bombs > 1 ? 's' : ''} · ` +
-      `hitbox ${stats.hitbox} · vs ${CONFIG.CHARACTERS[this.bossId]} on ${this.difficulty.toUpperCase()}`;
+      `hitbox ${stats.hitbox} · vs ${CONFIG.CHARACTERS[this.bossId]} on ${this.difficulty.toUpperCase()} · ${card}`;
   }
 
   open() {

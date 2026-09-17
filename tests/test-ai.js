@@ -1,9 +1,9 @@
 // test-ai.js — verify the AI makes valid moves and a game can progress (node test-ai.js)
 // Make CONFIG a global so ai.js (which uses it as a free variable) can see it.
-global.CONFIG = require('./js/config.js').CONFIG;
+global.CONFIG = require('../js/config.js').CONFIG;
 
-const { Board } = require('./js/chess/board.js');
-const ai = require('./js/chess/ai.js');
+const { Board } = require('../js/chess/board.js');
+const ai = require('../js/chess/ai.js');
 
 let passed = 0, failed = 0;
 function assert(cond, msg) {

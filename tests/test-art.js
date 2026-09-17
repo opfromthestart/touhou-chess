@@ -3,8 +3,8 @@
 // roster coverage, and drawCharacter degrades gracefully for unknown ids.
 
 const assert = require('assert');
-const { CHAR_SPRITES } = require('./js/art/characters.js');
-const { CONFIG } = require('./js/config.js');
+const { CHAR_SPRITES } = require('../js/art/characters.js');
+const { CONFIG } = require('../js/config.js');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -54,7 +54,7 @@ check('roster fully covered by sprites', () => {
 // canvas work, so a fake ctx proves the guard works.
 check('drawCharacter guards unknown ids', () => {
   const fakeCtx = {};
-  const fn = require('./js/art/characters.js').drawCharacter;
+  const fn = require('../js/art/characters.js').drawCharacter;
   assert.strictEqual(fn(fakeCtx, 'not-a-char', 0, 0, 1), false);
   // A known id should call draw on the ctx without throwing.
   let drew = false;

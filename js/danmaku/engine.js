@@ -138,6 +138,11 @@ function makeBullet(x, y, vx, vy, opts = {}) {
     age: 0, // frames alive (drives fade in/out)
     // Remove once this far from the SPAWN point (Taisei max_viewport_dist).
     maxDist: opts.maxDist || 0,
+    // Off-screen culling grace: the bullet is never culled for leaving the
+    // screen until this many frames have elapsed (see _updateBullets). Used
+    // by rotating laser rings, whose bullets can start off-screen and orbit
+    // back into view. minLife >= life means "never culled while alive".
+    minLife: opts.minLife || 0,
     sx: x,
     sy: y,
     grazed: false,
@@ -159,6 +164,8 @@ class DanmakuEngine {
     this.boss = null;
     this.bullets = [];
     this.playerShots = [];
+    this._playerHistory = [];
+    this._playerHistIdx = 0;
     this.phaseHp = 0;
     this.phaseMaxHp = 0;
     this.shotPattern = null;
@@ -279,6 +286,10 @@ class DanmakuEngine {
     };
     this.bullets = [];
     this.playerShots = [];
+    // Player position history ring buffer: stores { time, x, y } snapshots so
+    // emitters can aim at where the player WAS at a specific past time (aimTime).
+    this._playerHistory = [];
+    this._playerHistIdx = 0;
     this.fieldFreeze = null;
     // Per-spell-card stats (tracked in every fight, shown in Practice Mode):
     // total pixels the player moved, and the time-average of the distance to
@@ -430,6 +441,16 @@ class DanmakuEngine {
     p.y += dy * spd;
     p.x = Math.max(10, Math.min(this.W - 10, p.x));
     p.y = Math.max(10, Math.min(this.H - 10, p.y));
+    // Record player position into the history ring buffer (capacity 600 = 10 s
+    // at 60 fps — plenty for any aimTime offset). Entries are overwritten in
+    // circular fashion so memory stays bounded.
+    const MAX_HIST = 600;
+    if (this._playerHistory.length < MAX_HIST) {
+      this._playerHistory.push({ time: this.time, x: p.x, y: p.y });
+    } else {
+      this._playerHistory[this._playerHistIdx] = { time: this.time, x: p.x, y: p.y };
+    }
+    this._playerHistIdx = (this._playerHistIdx + 1) % MAX_HIST;
     // Practice stat: total distance moved this spell card (px). Measured
     // AFTER the edge clamp so pressing into a wall doesn't count as motion.
     const st = this.phaseStats ? this.phaseStats[this.phaseIndex] : null;
@@ -544,24 +565,53 @@ class DanmakuEngine {
     this._emitAt(this.boss.x, this.boss.y, em);
   }
 
+  // Look up the player's position at a specific past time (seconds ago).
+  // Used by emitters with `aimTime` to aim at where the player WAS, not where
+  // they are now — critical for coordinated laser+bullet patterns.
+  _playerAt(targetTime) {
+    const hist = this._playerHistory;
+    if (hist.length === 0) return { x: this.player.x, y: this.player.y };
+    // Binary search for the entry closest to targetTime.
+    let lo = 0, hi = hist.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (hist[mid].time < targetTime) lo = mid + 1;
+      else hi = mid;
+    }
+    return hist[lo];
+  }
+
   // Fire an emitter from an arbitrary origin (ox, oy). Aim is computed toward
   // the player from that origin. This is the single home for every emitter
   // type, so both the boss and any spawned sub-source share the vocabulary.
   _emitAt(ox, oy, em) {
     const p = this.player;
-    const speedMul = em.speedMul || 1;
+    const speedMul = em.speedMul !== undefined ? em.speedMul : 1;
     const densityMul = em.densityMul || 1;
     const count = Math.max(1, Math.round((em.count || 1) * densityMul));
     // em.speedStep adds speed PER FIRE (fire index = em._count): EoSD streams
     // whose bullets accelerate shot over shot (Night Bird / Demarcation).
-    const speed = ((em.speed || 2) + (em.speedStep || 0) * (em._count || 0)) * speedMul;
+    // Note: `!== undefined`, not `|| 2` — an EXPLICIT speed: 0 is legal and
+    // means "stationary" (static laser segments); only an UNSET speed falls
+    // back to the default 2.
+    const speed = ((em.speed !== undefined ? em.speed : 2) + (em.speedStep || 0) * (em._count || 0)) * speedMul;
     // Base bearing: em.angle (absolute) or the aim line to the player.
     // em.angleOffset adds a STATIC offset to the aim line — EoSD fans aim at
     // the player plus a fixed swing base (Night Bird's ∓33°/∓45° bases).
     // em.angleStep adds radians PER FIRE (fire index = em._count, 0-based):
     // a rotating beam (Moonlight Ray's counter-rotating lasers) or a swinging
     // aim (Night Bird / Demarcation streams).
-    const aimAngle = Math.atan2(p.y - oy, p.x - ox);
+    // em.aimTime (phase-relative seconds): if set, aim at the player's position
+    // from THAT time instead of now. This coordinates fans with earlier lasers
+    // — both aim at the same snapshot of the player.
+    let aimX = p.x, aimY = p.y;
+    if (em.aimTime !== undefined) {
+      const targetGlobal = (this.time - this.phaseTime) + em.aimTime;
+      const snap = this._playerAt(targetGlobal);
+      aimX = snap.x;
+      aimY = snap.y;
+    }
+    const aimAngle = Math.atan2(aimY - oy, aimX - ox);
     const baseAngle = (em.angle !== undefined ? em.angle : aimAngle + (em.angleOffset || 0))
       + (em.angleStep || 0) * (em._count || 0);
     // Color cycling on a GLOBAL phase clock (EoSD ins_118: a spell-wide color
@@ -674,7 +724,7 @@ class DanmakuEngine {
         const spread = em.spread !== undefined ? em.spread : Math.PI / 2;
         // em.speedStep: whole volley accelerates per fire (EoSD Demarcation
         // Sub21 streams: +0.25 speed shot over shot).
-        const s1 = ((em.speed || 2) + (em.speedStep || 0) * (em._count || 0)) * speedMul;
+        const s1 = ((em.speed !== undefined ? em.speed : 2) + (em.speedStep || 0) * (em._count || 0)) * speedMul;
         const s2 = (em.speed2 !== undefined ? em.speed2 : s1) * speedMul;
         const off = em.center ? -spread / 2 : 0;
         for (let r = 0; r < rays; r++) {
@@ -722,21 +772,61 @@ class DanmakuEngine {
         // inherit the first segment's countdown. Bullet lifetimes are
         // extended so they survive until the beam is solid, plus their
         // normal life after.
-        const a = baseAngle;
+        // Sweep (em.sweep, rad/s): the beam ROTATES IN PLACE around the fire
+        // origin while it lives — a true searchlight, not a static segment
+        // (see Danmakufu laser-sweep patterns). Each bullet orbits the origin
+        // at its fixed distance along the beam (a zero-growth 'curve' mover),
+        // and EACH NEW SEGMENT starts sweep*interval further around, exactly
+        // where the previous one has rotated to — so refired segments stack
+        // into ONE continuous ray spinning at `sweep` (no fanning, no
+        // snap-back). For a single beam do NOT also set angleStep: the
+        // per-fire advance is automatic.
+        // Multi-beam rings (em.count > 1): each firing lays `count` beams
+        // evenly spaced around the origin — a full 360° "laser ring". With
+        // `sweep`, every beam orbits the origin, and beam j of firing m sits
+        // at angle + j*TAU/count + sweep*t REGARDLESS of m — every refired
+        // copy lands exactly on top of the previous one, so the ring stacks
+        // into ONE smoothly spinning wheel at `sweep` rad/s (no fanning, no
+        // snap-back, and NO angleStep needed). Keep `life` at roughly one or
+        // two `interval`s (plus the automatic warn extension) so a couple of
+        // copies overlap and the beam never flickers. count is deliberately
+        // NOT scaled by densityMul: the gap geometry must stay dodgeable on
+        // every rank; density only thickens the beams. The per-firing
+        // telegraph reads as an initial `warn` seconds of thin line, then a
+        // solid spinning wheel (Kaguya's Brilliant Dragon Barrette).
+        const beams = Math.max(1, em.count || 1);
+        let a = baseAngle;
+        const sweep = em.sweep || 0;
+        if (sweep) a += sweep * (em.interval || 0.2) * (em._count || 0);
         const spacing = em.spacing || 8;
-        const len = em.laserLen !== undefined ? em.laserLen : this._edgeDist(ox, oy, a) + 30;
-        const n = Math.max(1, Math.round((len / spacing) * densityMul));
         const warn = em.warn !== undefined ? em.warn : 1.5;
         const grp = { solidAt: this.time + warn };
         const baseLife = em.life !== undefined ? em.life : 120;
         const life = Math.max(baseLife, Math.ceil(warn * 60) + baseLife);
-        for (let i = 0; i < n; i++) {
-          const d = i * spacing;
-          this._add(
-            ox + Math.cos(a) * d, oy + Math.sin(a) * d,
-            a, speed * 1.6, em,
-            { r: em.r || 5, color: em.color || '#ff3333', life, laserGroup: grp },
-          );
+        for (let j = 0; j < beams; j++) {
+          const aj = a + (j / beams) * TAU;
+          const len = em.laserLen !== undefined ? em.laserLen : this._edgeDist(ox, oy, aj) + 30;
+          const n = Math.max(1, Math.round((len / spacing) * densityMul));
+          for (let i = 0; i < n; i++) {
+            const d = i * spacing;
+            // minLife = full lifetime: a rotating beam's bullets may start
+            // off-screen (e.g. pointing away from the field) and orbit back
+            // into view, so off-screen culling must never remove them early.
+            // em.minLife can shorten this for non-rotating long beams.
+            const extra = { r: em.r || 5, color: em._cycColor || em.color || '#ff3333', life,
+              minLife: em.minLife !== undefined ? em.minLife : life, laserGroup: grp };
+            if (sweep) {
+              // Orbit the fire origin at fixed radius d, turning `sweep` rad/s.
+              Object.assign(extra, {
+                type: 'curve', curve: sweep / 60,
+                cx: ox, cy: oy, sa: aj, sr: d, cspeed: 0,
+              });
+            }
+            this._add(
+              ox + Math.cos(aj) * d, oy + Math.sin(aj) * d,
+              aj, speed * 1.6, em, extra,
+            );
+          }
         }
         break;
       }
@@ -942,7 +1032,7 @@ class DanmakuEngine {
   // different speeds). Returns a list of `count` values.
   _volleySpeeds(em, count) {
     if (Array.isArray(em.speeds) && em.speeds.length) return em.speeds;
-    const base = em.speed || 2;
+    const base = em.speed !== undefined ? em.speed : 2;
     const min = em.speedMin !== undefined ? em.speedMin : base * 0.6;
     const max = em.speedMax !== undefined ? em.speedMax : base * 1.4;
     const out = [];
@@ -983,7 +1073,7 @@ class DanmakuEngine {
       'accelX', 'accelY', 'retention', 'attraction', 'attractPoint', 'attractExp',
       'speedOscAmp', 'speedOscFreq', 'speedOscBase', 'maxDist',
       'fadeIn', 'fadeOut', 'rainbow', 'gravity', 'turn',
-      'freeze', 'releaseAngle', 'releaseSpeed', 'life',
+      'freeze', 'releaseAngle', 'releaseSpeed', 'life', 'minLife',
       // Hazard + visual fields: let ANY emitter create bullets that shed
       // children (spawnEvery/spawnEmits), can be shot down (destructible/hp),
       // burst on death (deathBurst), or leave a motion trail (trail). This is
@@ -1083,8 +1173,14 @@ class DanmakuEngine {
       if (b.maxDist && Math.hypot(b.x - b.sx, b.y - b.sy) > b.maxDist) {
         b.active = false;
       }
-      if (b.life <= 0 || b.x < -20 || b.x > this.W + 20 || b.y < -20 || b.y > this.H + 20) {
+      if (b.life <= 0) {
         b.active = false;
+      } else if (b.x < -20 || b.x > this.W + 20 || b.y < -20 || b.y > this.H + 20) {
+        // Off-screen cull — but only after `minLife` frames have passed.
+        // Rotating bullets (laser rings) can start off-screen and orbit
+        // back into view before their life expires, so they must not be
+        // culled early. minLife === life means "never cull while alive".
+        if (!b.minLife || b.age >= b.minLife) b.active = false;
       }
     }
     // Remove inactive bullets (in-place).
@@ -1304,7 +1400,7 @@ class DanmakuEngine {
     const p = this.player;
     for (const b of this.bullets) {
       if (!b.active) continue;
-      const s = rel.speed || 2;
+      const s = rel.speed !== undefined ? rel.speed : 2;
       let a;
       if (rel.mode === 'aim') a = Math.atan2(p.y - b.y, p.x - b.x);
       else if (rel.mode === 'outward') a = Math.atan2(b.y - this.boss.y, b.x - this.boss.x);

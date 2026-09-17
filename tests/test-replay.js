@@ -8,9 +8,9 @@
 //
 // Run: node test-replay.js
 
-const { Board } = require('./js/chess/board.js');
-const { GameLog } = require('./js/debug/log.js');
-const { replayGame } = require('./js/debug/replay.js');
+const { Board } = require('../js/chess/board.js');
+const { GameLog } = require('../js/debug/log.js');
+const { replayGame } = require('../js/debug/replay.js');
 
 let passed = 0;
 let failed = 0;

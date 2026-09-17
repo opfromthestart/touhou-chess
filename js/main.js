@@ -478,7 +478,7 @@
       if (inFight || aiThinking) return;
       practice.open();
     });
-    practice.onSelect = ({ bossId, difficulty, playerPieceType, playerChar }) => {
+    practice.onSelect = ({ bossId, difficulty, playerPieceType, playerChar, spellIndex }) => {
       practice.close();
       inFight = true;
       ui.setTurnIndicator('Practice fight!');
@@ -487,7 +487,7 @@
         // No board effects at all — just hand the menu back for another fight.
         refreshTurnIndicator();
         practice.open();
-      }, true);
+      }, true, spellIndex);
     };
   }
 

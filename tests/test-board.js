@@ -1,5 +1,5 @@
 // test-board.js — quick sanity tests for the chess core (run with: node test-board.js)
-const { Board } = require('./js/chess/board.js');
+const { Board } = require('../js/chess/board.js');
 
 let passed = 0;
 let failed = 0;

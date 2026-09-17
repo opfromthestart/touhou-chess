@@ -13,7 +13,7 @@ disassembler, opcode map, and rank-mask encoding:
 
 | Game | Release | ECL source | Disassembler | Done? |
 | --- | --- | --- | --- | --- |
-| **EoSD** (Touhou 6) | 2002 | `eosd_extract/ecl/ecldataN.ecl` | Python struct walk | Rumia (S1) |
+| **EoSD** (Touhou 6) | 2002 | `eosd_extract/ecl/ecldataN.ecl` | Python struct walk | Rumia (S1), Yukari (S7) |
 | **MoF** (Touhou 10) | 2005 | `mof_extract/ecl/stageNN.ecl` | `thecl -d 10 -j` | Nitori (S3) |
 
 The process is identical; only the byte layout and opcode numbers differ. Every
@@ -614,3 +614,57 @@ Verified: `node test-bosses.js` 396/0, `tmp-nitori-determinism.js` 10/0
 (spout geometry + repeat/period re-arm through the real fire path),
 `tmp-nitori-density.js` max concurrent bullets 435 (normal) / 393 (lunatic),
 `tmp-engine-test2.js` 92/0.
+
+### 14.3 Yukari (EoSD, stage 7, `ecldata7.ecl`)
+Phantasm Stage boss. All 13 spell-card banners live in `ecldata7_utf8.txt`
+(Sub22/23/24/33/36/39/44/48/50/54/57/60/68). The boss container is Sub16→Sub17
+(intro) → Sub18/19 (barrage controllers) → Sub20/21 (death). The remaining
+cards are scheduled by the barrage subs (Sub32/35/38/43/47/49/53/56/59) via
+`ins_115`/`ins_116` (spell-card timeout + sub).
+
+Spell cards used in this port (6 of 13, most visually distinctive):
+| Card | ECL sub | Key constructs |
+| --- | --- | --- |
+| Moon Sign "Silent Serena" | Sub22 | random-angle slow rings (ins_75 2×6, speed 0), aimed 8-way fan (ins_68 2×8, speed 2.7→2.0, angle −π/2) |
+| Sun Sign "Royal Flare" | Sub23 | rotating stream pairs (ins_68 1×2, speed 0, angle offset 0.52/1.05), escalating ring bursts (ins_121 13,3/5/6) |
+| Fire-Water-Wood-Metal-Earth "Philosopher's Stone" | Sub24 | five sub-entities (Sub25–29) each firing a different pattern: ring (ins_70 2×10), aimed (ins_67 6×11), spiral (ins_75 10×10), ray (ins_70 16), aimed (ins_75 13) |
+| Forbidden "Kagome Kagome" | Sub44 | spawning gap-traps (ins_95 Sub45 ×15) that fire 9-bullet rings (ins_68 1×9) + aimed 3-way fans (ins_67 9×3, speed 3.6, angle ±0.785) |
+| Forbidden "Cranberry Trap" | Sub33 | wandering traps (ins_95 Sub34 ×10) that dash and fire aimed streams (ins_67 3×6 / ins_68 1×4) |
+| QED "Ripples of 495 Years" | Sub68 | massive 88-bullet ring (ins_70 6×88, speed 1→var, angle random ±π), two counter-rotating waves (ins_121 16,0/1) |
+
+Barrage subs (shared non-spell pattern):
+```
+ins_70(2, 2|6, 64|32, 2|3, 2.0|2.5|3.5, 1.0, -10005, 0, 513)
+ins_76(30|60)          // refire every 30–60f
+ins_9(-10005, π, -π)   // randomize aim angle each cycle
+ins_50(-π, π)          // ±π range
+```
+= 64/32-ray ring, speed 2–3.5, refired with per-cycle angle jitter.
+Translated as a rotating ring with `rotStep`.
+
+Emitted (`bosses.js`, the `yukari:` block): Normal-authored, Lunatic scaled
+by `scalePhase`. Phases:
+- **Normal** (5): Non-spell (hp130) → Silent Serena (hp150) → Royal Flare
+  (hp160) → Philosopher's Stone (hp170) → Ripples of 495 Years (hp200, noBombs).
+- **Lunatic** (6): same opener + Silent Serena/Royal Flare/Philosopher's Stone
+  (hp170/180/190) + Kagome Kagome (hp200) + Ripples of 495 Years (hp220,
+  noBombs).
+
+Construct → emitter mapping:
+- Barrage rings → `ring` count 32/24, `rotStep` ±0.03–0.05, refire 0.8–1.2s.
+- Silent Serena slow rings → `ring` count 12, speed 1.0, `rotStep` 0.02.
+- Silent Serena aimed fan → `aimed` count 9, spread 0.52, angle −π/2,
+  `angleOffset` 0.26.
+- Royal Flare rotating streams → `point` count 1, `angleStep` ±0.052,
+  counter-rotating pair.
+- Royal Flare sweeping fans → `fan` count 5, spread 1.05, `angleStep` ±0.04.
+- Philosopher's Stone five elements → five distinct emitters: `ring` 10,
+  `aimed` 11, `spiral` arms 10, `ring` 16, `aimed` 13.
+- Kagome Kagome trap rings → `ring` count 9, `rotStep` 0.08; aimed 3-way
+  fans → `aimed` count 3 at three 45° offsets.
+- Ripples 88-ring → `ring` count 44, `rotStep` 0.02, color-cycled;
+  counter-wave → second `ring` with `rot: π/44`, opposite `rotStep`.
+
+Verified: `node tests/test-bosses.js` 408/0, `tests/tmp-engine-test2.js` 92/0,
+density probe max 550 (normal) / 632 (lunatic) concurrent bullets
+(Philosopher's Stone peak), determinism PASS (171 bullets compared, 300 frames).

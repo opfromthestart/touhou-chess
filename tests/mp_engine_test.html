@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Engine external-input test</title>
+</head>
+<body>
+  <canvas id="c1" width="480" height="640"></canvas>
+  <canvas id="c2" width="480" height="640"></canvas>
+  <script src="../js/config.js"></script>
+  <script src="../js/danmaku/engine.js"></script>
+  <script src="../js/danmaku/bosses.js"></script>
+  <script>
+    // Runs synchronously on load; results land in window.__ET for the CDP driver.
+    const results = { pass: 0, fail: 0, details: [] };
+    function check(name, cond) {
+      if (cond) { results.pass++; results.details.push('PASS ' + name); }
+      else { results.fail++; results.details.push('FAIL ' + name); }
+    }
+    try {
+      const phases = getPhases('patchouli', 'normal');
+      const boss = BOSSES['patchouli'];
+      const bossCfg = { color: boss.color, bgTop: boss.bgTop, bgBottom: boss.bgBottom, move: boss.move, charId: 'patchouli' };
+      const stats = CONFIG.DANMAKU_STATS.r;
+
+      // ── External (spectator) engine: must NOT bind window keys ───────────
+      const ext = new DanmakuEngine(document.getElementById('c1'), { onEnd(){}, onPhase(){}, onHud(){} });
+      ext.externalInput = true;
+      ext.start(phases, bossCfg, stats, 'r', 'sakuya');
+      ext.stop(); // freeze the loop so game logic can't mutate state
+
+      const s0 = ext.getInputState();
+      check('getInputState exposes all fields', ['up','down','left','right','focus','bombSeq'].every((k) => k in s0));
+      check('initial input is neutral', s0.up===false && s0.down===false && s0.left===false && s0.right===false && s0.focus===false && s0.bombSeq===0);
+
+      ext.applyRemoteInput({ up:true, left:true, focus:true, bombSeq:0 });
+      const s1 = ext.getInputState();
+      check('remote up applied', s1.up===true);
+      check('remote left applied', s1.left===true);
+      check('remote focus sets player.focus', ext.player.focus===true);
+      check('unapplied axes stay false', s1.down===false && s1.right===false);
+
+      // Bomb edge-detection via a spy (avoids depending on bombs/gauge rules).
+      let bombCalls = 0;
+      ext.bomb = () => { bombCalls++; };
+      ext.applyRemoteInput({ bombSeq:1 });
+      check('bomb fires when seq advances 0->1', bombCalls===1);
+      check('bombSeq tracked to 1', ext.bombSeq===1);
+      ext.applyRemoteInput({ bombSeq:1 });
+      check('no bomb on repeated seq (edge detect)', bombCalls===1);
+      ext.applyRemoteInput({ bombSeq:3 });
+      check('bomb fires once on seq jump 1->3', bombCalls===2);
+      ext.applyRemoteInput({ bombSeq:2 });
+      check('no bomb when seq goes backward', bombCalls===2);
+
+      // A real window key event must NOT affect the spectator engine.
+      window.dispatchEvent(new KeyboardEvent('keydown', { key:'ArrowUp', bubbles:true }));
+      const s2 = ext.getInputState();
+      check('external engine ignores window keydown', s2.up===false);
+
+      // ── Local (controllable) engine: MUST bind window keys ───────────────
+      const loc = new DanmakuEngine(document.getElementById('c2'), { onEnd(){}, onPhase(){}, onHud(){} });
+      loc.start(phases, bossCfg, stats, 'r', 'sakuya');
+      window.dispatchEvent(new KeyboardEvent('keydown', { key:'ArrowUp', bubbles:true }));
+      check('local engine reacts to window keydown', loc.getInputState().up===true);
+      window.dispatchEvent(new KeyboardEvent('keyup', { key:'ArrowUp', bubbles:true }));
+      check('local engine releases on keyup', loc.getInputState().up===false);
+      const before = loc.bombSeq;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key:' ', bubbles:true }));
+      check('local space press bumps bombSeq', loc.bombSeq===before+1);
+      loc.stop();
+
+      // Determinism sanity: identical fight identity -> identical phase list.
+      const pA = getPhases('patchouli','normal');
+      const pB = getPhases('patchouli','normal');
+      check('getPhases deterministic (same length, >0)', pA.length===pB.length && pA.length>0);
+    } catch (e) {
+      results.fail++;
+      results.details.push('FAIL EXCEPTION: ' + (e && e.stack || e));
+    }
+    window.__ET = results;
+  </script>
+</body>
+</html>

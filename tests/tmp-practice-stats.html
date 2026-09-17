@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Practice Stats Smoke Test</title>
+<link rel="stylesheet" href="../css/style.css"></head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <h1>Touhou Chess</h1>
+    <div id="status"><span id="turn-indicator"></span><span id="game-over-banner"></span></div>
+    <div id="controls">
+      <button id="btn-new-game"></button>
+      <button id="btn-undo"></button>
+      <button id="btn-practice"></button>
+      <button id="btn-how-to"></button>
+      <button id="btn-export-log"></button>
+      <label class="ai-strength-label" for="ai-strength">AI</label>
+      <select id="ai-strength">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+      </select>
+      <button id="btn-sound">🔊 Sound</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="captured-tray-black" class="captured-tray"></div>
+    <div id="board-wrap"><div id="board"></div>
+      <div id="promotion-picker" class="hidden"><div class="promo-title"></div><div class="promo-choices"></div></div>
+    </div>
+    <div id="captured-tray-white" class="captured-tray"></div>
+  </main>
+  <div id="log-panel"><h2>Log</h2><ul id="move-log"></ul></div>
+</div>
+<div id="how-to-modal" class="modal hidden"><div class="modal-content"><h2>How</h2><button id="btn-close-how-to"></button></div></div>
+<div id="test-result" style="position:fixed;top:0;left:0;background:white;color:black;z-index:999;padding:8px;font-family:monospace;white-space:pre;max-width:60vw"></div>
+
+<script src="../js/config.js"></script>
+<script src="../js/art/characters.js"></script>
+<script src="../js/chess/board.js"></script>
+<script src="../js/chess/ai.js"></script>
+<script src="../js/audio/sfx.js"></script>
+<script src="../js/danmaku/engine.js"></script>
+<script src="../js/danmaku/bosses.js"></script>
+<script src="../js/ui/board-ui.js"></script>
+<script src="../js/ui/fight-ui.js"></script>
+<script src="../js/ui/practice-ui.js"></script>
+<script src="../js/debug/log.js"></script>
+<script src="../js/debug/replay.js"></script>
+<script src="../js/main.js"></script>
+<script>
+// Headless smoke test for the per-spell-card practice stats:
+//   - live HUD items (Close / Moved) visible in practice mode only
+//   - values update while the ship moves and bullets are on screen
+//   - the result screen lists every spell card with both stats
+//   - a regular (non-practice) fight hides both
+(function () {
+  const out = [];
+  const el = document.getElementById('test-result');
+  function log(m) { out.push(m); el.textContent = out.join('\n'); }
+  function fail(m) { log('FAIL: ' + m); el.style.background = 'red'; throw new Error(m); }
+  function ok(m) { log('PASS: ' + m); }
+  function sq(r, c) { return document.querySelector(`#board .square[data-row="${r}"][data-col="${c}"]`); }
+  function click(r, c) { sq(r, c).dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+  const TC = window.__TC;
+  const fightOpen = () => !document.getElementById('fight-modal').classList.contains('hidden');
+  const practiceOpen = () => !document.getElementById('practice-modal').classList.contains('hidden');
+
+  // Headless note: requestAnimationFrame does not tick under
+  // --virtual-time-budget, so we stop the engine's own loop and drive
+  // update() by hand (exactly like the Node suites), invoking the same UI
+  // callbacks (_onHud / onEnd -> _onEnd) the loop would invoke.
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        // --- Start a practice fight (defaults: Reimu/k vs Rumia, Normal). ---
+        document.getElementById('btn-practice').click();
+        document.getElementById('practice-modal').querySelector('#btn-practice-start').click();
+        if (!fightOpen()) fail('practice fight did not open');
+        const eng = TC.fight.engine;
+        eng.stop(); // take over from the rAF loop; also stops blur-clearing keys
+        eng.player.lives = 999; // survive long enough to observe stats
+        ok('practice fight started');
+
+        // Live HUD items must be VISIBLE in practice mode.
+        for (const id of ['hud-close-wrap', 'hud-moved-wrap']) {
+          const w = document.getElementById(id);
+          if (!w) fail('#' + id + ' missing from the HUD');
+          if (w.classList.contains('hidden')) fail('#' + id + ' should be visible in practice mode');
+        }
+        ok('Close/Moved HUD items visible in practice mode');
+
+        // Move right for 120 frames (2s): the ship starts at x=240 and
+        // clamps at x=470, so ~230px must be recorded. Night Bird's first
+        // flock fires at t=1.5s, so bullets are on screen by the end.
+        eng.keys['arrowright'] = true;
+        for (let i = 0; i < 120; i++) eng.update();
+        eng.keys['arrowright'] = false;
+        TC.fight._onHud(eng._hud()); // same callback the rAF loop uses
+        const moved = document.getElementById('hud-moved').textContent;
+        if (!/^\d+px$/.test(moved) || parseInt(moved) < 200)
+          fail('Moved HUD did not accumulate (got "' + moved + '")');
+        ok('Moved HUD accumulates while moving (' + moved + ')');
+        const close = document.getElementById('hud-close').textContent;
+        if (!/^\d+px$|—$/.test(close)) fail('Close HUD format wrong: "' + close + '"');
+        ok('Close HUD shows a distance or placeholder (' + close + ')');
+
+        // Engine-side per-card accounting must agree with the live HUD.
+        const st0 = eng.phaseStats[0];
+        if (!(st0.moved > 0)) fail('engine phaseStats[0].moved is 0');
+        if (Math.abs(st0.moved - eng._hud().phaseMoved) > 1e-6)
+          fail('phaseStats.moved disagrees with the live HUD');
+        ok('engine phaseStats match the live HUD');
+
+        // Break the first card's gauge so the second card starts, then end
+        // the fight: the result must list BOTH cards with stats.
+        eng.phaseHp = 0;
+        eng.update();
+        if (eng.phaseIndex !== 1) fail('card did not advance (phaseIndex=' + eng.phaseIndex + ')');
+        if (!(eng.phaseStats[0].avgDist >= 0)) fail('first card avgDist not finalized');
+        eng._end('win'); // fires onEnd -> FightUI._onEnd -> result overlay
+        const statsEl = document.getElementById('fight-stats');
+        if (statsEl.classList.contains('hidden')) fail('result stats table not shown');
+        const rows = statsEl.querySelectorAll('.stats-row');
+        if (rows.length !== 2) fail('expected 2 card rows, got ' + rows.length);
+        for (const r of rows) {
+          const t = r.textContent;
+          if (!/close \d+px|close —/.test(t)) fail('row missing close stat: ' + t);
+          if (!/moved \d+px/.test(t)) fail('row missing moved stat: ' + t);
+        }
+        if (!/Night Bird/.test(rows[0].textContent) || !/Demarcation/.test(rows[1].textContent))
+          fail('row names wrong: ' + rows[0].textContent + ' | ' + rows[1].textContent);
+        ok('result table lists both cards with close+moved stats');
+
+        // --- A regular (board) fight must hide the practice extras. ---
+        document.getElementById('btn-fight-continue').click();
+        const b = TC.board;
+        b.reset();
+        b.grid[4][4] = { type: 'p', color: 'white', character: 'cirno', hasMoved: true };
+        b.grid[3][3] = { type: 'n', color: 'black', character: 'nitori', hasMoved: true };
+        b.turn = 'white';
+        TC.ui.render(b);
+        click(4, 4);
+        click(3, 3); // capture -> real Normal fight vs Nitori
+        if (!fightOpen()) fail('real capture fight did not open');
+        for (const id of ['hud-close-wrap', 'hud-moved-wrap']) {
+          if (!document.getElementById(id).classList.contains('hidden'))
+            fail('#' + id + ' should be hidden in a regular fight');
+        }
+        ok('Close/Moved HUD items hidden in a regular fight');
+        TC.fight.engine._end('win');
+        if (!document.getElementById('fight-stats').classList.contains('hidden'))
+          fail('stats table must stay hidden in a regular fight');
+        ok('stats table hidden on a regular fight result');
+        log('ALL PRACTICE STATS TESTS PASSED');
+        el.style.background = 'lime';
+      } catch (e) { fail(e.message); }
+    }, 300);
+  });
+})();
+</script>
+</body>
+</html>

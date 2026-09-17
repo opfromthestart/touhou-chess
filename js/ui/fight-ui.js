@@ -69,12 +69,21 @@ class FightUI {
   // playerChar: the protagonist character actually fighting (drives the ship
   // sprite — e.g. 'sakuya' vs 'youmu' for rooks). practiceMode: true for
   // Practice Mode fights (no board stakes; the result text says so).
-  startFight(bossId, difficulty, playerPieceType, playerChar, onResult, practiceMode) {
+  // spellIndex: optional (Practice Mode) — play just one spell card instead of
+  // the full fight (0-based index into the boss's phase list). null/undefined
+  // runs the whole fight.
+  startFight(bossId, difficulty, playerPieceType, playerChar, onResult, practiceMode, spellIndex) {
     this._onResult = onResult;
     this._practiceMode = !!practiceMode;
     this._result = null;
     const boss = BOSSES[bossId];
-    const phases = getPhases(bossId, difficulty);
+    let phases = getPhases(bossId, difficulty);
+    if (spellIndex != null && spellIndex >= 0 && spellIndex < phases.length) {
+      // The engine treats the sliced list as a complete fight; its per-fight
+      // RNG seed depends only on boss/piece/char, so a single card plays
+      // identically to that card inside the full fight.
+      phases = phases.slice(spellIndex, spellIndex + 1);
+    }
     const stats = CONFIG.DANMAKU_STATS[playerPieceType] || CONFIG.DANMAKU_STATS.p;
 
     // Header.
@@ -106,7 +115,8 @@ class FightUI {
 
     this.resultEl.classList.add('hidden');
     this.modal.classList.remove('hidden');
-    this._banner(boss.phases[difficulty === 'lunatic' ? 'lunatic' : 'normal'][0].name, false);
+    // phases[0] is the card actually starting (it may be a single-card slice).
+    this._banner(phases[0].name, false);
 
     this.engine.start(phases, {
       color: boss.color,
