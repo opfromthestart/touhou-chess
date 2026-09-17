@@ -687,11 +687,23 @@ class DanmakuEngine {
         // each full ring is offset from the last, e.g. +6° per emission).
         // em.aimRing: start the ring at the aim line (baseAngle), so exactly
         // one bullet flies dead at the player — EoSD aim_mode 2 rings.
+        // em.spin (rad/s): the ring ROTATES IN PLACE as it expands — each
+        // bullet orbits the fire origin (a 'curve' mover) while its radius
+        // grows at `speed`, so the whole ring spins (Kaguya's Eternity Line
+        // counter-rotates two rings: spin +0.4 / -0.4). Positive = clockwise
+        // on screen. Do not combine with em.script (the script wins).
         const rot = (em.aimRing ? baseAngle : (em.rot || 0)) + (em.rotStep || 0) * (em._count || 0);
         for (let i = 0; i < count; i++) {
           const a = rot + (i / count) * TAU;
           const extra = {};
-          if (em.releaseTangent !== undefined) {
+          if (em.spin) {
+            // Orbit the fire origin, starting at radius 0 (all bullets spawn
+            // on the boss and peel off into the spinning ring).
+            Object.assign(extra, {
+              type: 'curve', curve: em.spin / 60,
+              cx: ox, cy: oy, sa: a, sr: 0, cspeed: speed,
+            });
+          } else if (em.releaseTangent !== undefined) {
             // Demarcation-style ring: fly outward, hold, then drift
             // PERPENDICULAR to the radius (tangent), alternating direction
             // per bullet (even index one way, odd the other).

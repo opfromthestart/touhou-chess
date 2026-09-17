@@ -1404,16 +1404,19 @@ const BOSSES = {
           duration: 25,
           hp: 180,
           emits: [
-            // The Eternity Line (永命線, Sub67/68): the moon hurls a giant
-            // 13-ray ring in two opposite, counter-rotating waves (the source
-            // fires two 13/12-ray circles back-to-back, speed rows 3.0 -> 1.5).
+            // The Eternity Line (永命線, Sub67/68): the moon hurls two big
+            // counter-rotating rings (the source fires two circles
+            // back-to-back, speed rows 3.0 -> 1.5). Each ring SPINS as it
+            // expands: one clockwise, one counterclockwise. The second ring
+            // is offset by half a bullet-spacing (PI/27) so its 27 bullets
+            // interleave exactly between the first ring's.
             {
-              t: 0, type: 'ring', count: 27, speed: 2.8, rotStep: 0.05, aimRing: true,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.5, r: 14
+              t: 0, type: 'ring', count: 27, speed: 1.4, spin: 0.25, aimRing: true,
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.3, r: 14
             },
             {
-              t: 0.75, type: 'ring', count: 27, speed: 2.2, rotStep: -0.05, rot: Math.PI / 13,
-              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.5, r: 14
+              t: 0.75, type: 'ring', count: 27, speed: 1.2, spin: -0.25, rot: Math.PI / 27,
+              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.3, r: 14
             },
             // Life Spring Infinity (H/L, Sub69): the moon erupts a full-circle
             // laser burst (52 beams). Approximated as a fast-rotating 12-beam
