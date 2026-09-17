@@ -711,9 +711,22 @@ class DanmakuEngine {
           if (em.spin) {
             // Orbit the fire origin, starting at radius 0 (all bullets spawn
             // on the boss and peel off into the spinning ring).
+            // A spinning bullet can leave the screen and rotate back in, so
+            // off-screen culling must not remove it while its orbit still
+            // intersects the playfield. Every orbit point sits exactly `sr`
+            // from the fire origin, and the farthest point of the (cull-band
+            // extended) playfield is `far` away — so once sr > far the bullet
+            // can never re-enter and culling is safe again. That crossing
+            // is the minLife. em.minLife can override it.
+            const m = 20; // matches the off-screen cull margin in _updateBullets
+            const far = Math.max(
+              Math.hypot(ox + m, oy + m), Math.hypot(this.W - ox + m, oy + m),
+              Math.hypot(ox + m, this.H - oy + m), Math.hypot(this.W - ox + m, this.H - oy + m),
+            );
             Object.assign(extra, {
               type: 'curve', curve: em.spin / 60,
               cx: ox, cy: oy, sa: a, sr: 0, cspeed: speed,
+              minLife: em.minLife !== undefined ? em.minLife : Math.ceil(far / speed),
             });
           } else if (em.releaseTangent !== undefined) {
             // Demarcation-style ring: fly outward, hold, then drift

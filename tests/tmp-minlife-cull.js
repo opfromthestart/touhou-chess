@@ -10,7 +10,9 @@
 //   4. `life` expiry always wins (minLife never extends a bullet's life),
 //   5. the laser emitter stamps minLife = life onto every beam bullet,
 //   6. telegraph collision: a laser-group bullet does not hit before
-//      solidAt and does hit after.
+//      solidAt and does hit after,
+//   7. spin rings: bullets that leave the field orbit back in (minLife
+//      covers the orbit out to the far corner; culling resumes after).
 // Run with: node tests/tmp-minlife-cull.js
 'use strict';
 global.window = { addEventListener() {}, removeEventListener() {} };
@@ -145,6 +147,48 @@ function find(e, pred) {
   e._checkCollisions();
   assert(e.player.lives === 2, 'hits the player once the beam is solid');
   assert(!find(e, b => b.laserGroup), 'bullet consumed on hit');
+}
+
+// ── 7. Spin ring: bullets that leave the field orbit back in ───────────────
+{
+  const e = freshEngine();
+  e.phases = [{
+    name: 'spin-check', duration: 5, hp: 10,
+    emits: [{
+      t: 0, type: 'ring', count: 27, speed: 1.4, spin: 0.25, aimRing: true,
+      color: '#ffdd88', shape: 'circle',
+    }],
+  }];
+  e.phaseIndex = 0;
+  e._emitPattern();
+  const ring = e.bullets.slice();
+  assert(ring.length === 27 && ring.every(b => b.type === 'curve'),
+    'spin ring fires 27 curve-mover bullets');
+  const far = Math.max(
+    Math.hypot(BX + 20, BY + 20), Math.hypot(W - BX + 20, BY + 20),
+    Math.hypot(BX + 20, H - BY + 20), Math.hypot(W - BX + 20, H - BY + 20));
+  assert(ring.every(b => b.minLife === Math.ceil(far / 1.4)),
+    'minLife covers the orbit out to the far corner (minLife=' + ring[0].minLife + ')');
+  // Run the ring; count off-screen -> on-screen re-entries and early culls.
+  const out = b => b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20;
+  let reentries = 0, earlyCulls = 0;
+  let prevOut = new Set();
+  for (let f = 0; f < 60 * 12; f++) {
+    const aliveBefore = e.bullets.filter(b => b.active);
+    step(e);
+    const nowOut = e.bullets.filter(b => b.active && out(b));
+    const nowIn = e.bullets.filter(b => b.active && !out(b));
+    for (const b of nowIn) if (prevOut.has(b)) reentries++;
+    for (const b of aliveBefore) {
+      if (!e.bullets.includes(b) && b.age < b.minLife) earlyCulls++;
+    }
+    prevOut = new Set(nowOut);
+  }
+  assert(reentries > 0,
+    'at least one bullet left the field and orbited back in (reentries=' + reentries + ')');
+  assert(earlyCulls === 0, 'no bullet culled before its minLife');
+  assert(e.bullets.length === 0,
+    'all bullets eventually culled once their orbit leaves the field');
 }
 
 console.log(pass + ' passed, ' + fail + ' failed');
