@@ -13,7 +13,7 @@ const TAU = Math.PI * 2;
 // the AI's survival-model learning, and PVP fairness reproducible.
 function mulberry32(seed) {
   let a = seed >>> 0;
-  return function () {
+  return function() {
     a |= 0;
     a = (a + 0x6D2B79F5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -156,9 +156,9 @@ class DanmakuEngine {
     this.ctx = canvas.getContext('2d');
     this.W = canvas.width;
     this.H = canvas.height;
-    this.onEnd = opts.onEnd || (() => {});
-    this.onPhase = opts.onPhase || (() => {});
-    this.onHud = opts.onHud || (() => {});
+    this.onEnd = opts.onEnd || (() => { });
+    this.onPhase = opts.onPhase || (() => { });
+    this.onHud = opts.onHud || (() => { });
 
     this.player = null;
     this.boss = null;
@@ -251,7 +251,7 @@ class DanmakuEngine {
   applyRemoteInput(state) {
     if (!state) return;
     const k = this.keys;
-    k['arrowup'] = !!state.up;     k['w'] = !!state.up;
+    k['arrowup'] = !!state.up; k['w'] = !!state.up;
     k['arrowdown'] = !!state.down; k['s'] = !!state.down;
     k['arrowleft'] = !!state.left; k['a'] = !!state.left;
     k['arrowright'] = !!state.right; k['d'] = !!state.right;
@@ -515,8 +515,10 @@ class DanmakuEngine {
       // Re-arm the hold/slide cycle at every phase change (phaseIndex flip)
       // so each card starts with the boss holding still at its current spot.
       if (!b._sl || b._sl.pi !== this.phaseIndex) {
-        b._sl = { pi: this.phaseIndex, x: b.x, y: b.y, t: 0, holding: true,
-                  sx: b.x, sy: b.y, tx: b.x, ty: b.y };
+        b._sl = {
+          pi: this.phaseIndex, x: b.x, y: b.y, t: 0, holding: true,
+          sx: b.x, sy: b.y, tx: b.x, ty: b.y
+        };
       }
       const s = b._sl;
       // Resolve the slide pacing for THIS card: the current phase may override
@@ -525,10 +527,10 @@ class DanmakuEngine {
       const ph = this.phases[this.phaseIndex];
       const pick = (key, def) =>
         (ph && ph[key] !== undefined) ? ph[key]
-        : (b[key] !== undefined) ? b[key] : def;
+          : (b[key] !== undefined) ? b[key] : def;
       const holdDur = pick('holdDur', 3);
       const slideDur = pick('slideDur', 0.6);
-      const dist = pick('slideDist', 140);
+      const dist = pick('slideDist', 200);
       s.t += this.step / 1000;
       if (s.holding) {
         b.x = s.x; b.y = s.y;
@@ -653,13 +655,14 @@ class DanmakuEngine {
     // em.angleStep adds radians PER FIRE (fire index = em._count, 0-based):
     // a rotating beam (Moonlight Ray's counter-rotating lasers) or a swinging
     // aim (Night Bird / Demarcation streams).
-    // em.aimTime (phase-relative seconds): if set, aim at the player's position
-    // from THAT time instead of now. This coordinates fans with earlier lasers
-    // — both aim at the same snapshot of the player.
+    // em.aimTime (seconds): if set, aim at the player's position that many
+    // seconds BEFORE THIS FIRE (a lookback delay, not an absolute time).
+    // This coordinates re-firing emitters: a fan that fires 1.0s after a
+    // laser wall (aimTime: 1.0) tracks the wall's LATEST aim on every refire,
+    // so the two stay aligned for the whole card — not just the first volley.
     let aimX = p.x, aimY = p.y;
     if (em.aimTime !== undefined) {
-      const targetGlobal = (this.time - this.phaseTime) + em.aimTime;
-      const snap = this._playerAt(targetGlobal);
+      const snap = this._playerAt(this.time - em.aimTime);
       aimX = snap.x;
       aimY = snap.y;
     }
@@ -735,8 +738,10 @@ class DanmakuEngine {
             extra.script = [
               { dur: Math.round((em.flyDur !== undefined ? em.flyDur : 1) * 60), mode: 'fly' },
               { dur: Math.round((em.holdDur !== undefined ? em.holdDur : 0.3) * 60), mode: 'hold' },
-              { dur: 999999, mode: 'tangent', speed: em.releaseSpeed || 0.8,
-                dir: (i % 2 === 0 ? 1 : -1) * (em.tangentDir || 1) },
+              {
+                dur: 999999, mode: 'tangent', speed: em.releaseSpeed || 0.8,
+                dir: (i % 2 === 0 ? 1 : -1) * (em.tangentDir || 1)
+              },
             ];
           } else if (em.script) {
             extra.script = em.script;
@@ -894,8 +899,10 @@ class DanmakuEngine {
             // off-screen (e.g. pointing away from the field) and orbit back
             // into view, so off-screen culling must never remove them early.
             // em.minLife can shorten this for non-rotating long beams.
-            const extra = { r: em.r || 5, color: em._cycColor || em.color || '#ff3333', life,
-              minLife: em.minLife !== undefined ? em.minLife : life, laserGroup: grp };
+            const extra = {
+              r: em.r || 5, color: em._cycColor || em.color || '#ff3333', life,
+              minLife: em.minLife !== undefined ? em.minLife : life, laserGroup: grp
+            };
             if (sweep) {
               // Orbit the fire origin at fixed radius d, turning `sweep` rad/s.
               Object.assign(extra, {
@@ -1852,6 +1859,16 @@ class DanmakuEngine {
     ctx.fillRect(0, 0, this.W, this.H);
     this._drawBackground(ctx);
 
+    // Player shots.
+    for (const s of this.playerShots) {
+      if (!s.active) continue;
+      this._drawBullet(ctx, s);
+    }
+
+    // Player.
+    this._drawPlayer(ctx);
+
+
     // Boss.
     this._drawBoss(ctx);
 
@@ -1882,16 +1899,6 @@ class DanmakuEngine {
       ctx.stroke();
       ctx.restore();
     }
-
-    // Player shots.
-    for (const s of this.playerShots) {
-      if (!s.active) continue;
-      this._drawBullet(ctx, s);
-    }
-
-    // Player.
-    this._drawPlayer(ctx);
-
     ctx.restore();
   }
 

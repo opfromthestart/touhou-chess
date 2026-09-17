@@ -1407,7 +1407,7 @@ const BOSSES = {
           name: "Swallow's Cowrie Shell",
           duration: 25,
           hp: 180,
-          holdDur: 3.0, // MUST be static: t=1.6 lasers + t=2.6 aimTime fan coordinate on the boss position
+          holdDur: 3.6, // MUST be static: t=1.6 lasers + t=2.6 aimTime fan coordinate on the boss position
           emits: [
             // The Eternity Line (永命線, Sub67/68): the moon hurls two big
             // counter-rotating rings (the source fires two circles
@@ -1417,36 +1417,45 @@ const BOSSES = {
             // interleave exactly between the first ring's.
             {
               t: 0, type: 'ring', count: 27, speed: 1.4, spin: 0.25, aimRing: true,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.3, r: 14
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.5, r: 14
             },
             {
               t: 0.75, type: 'ring', count: 27, speed: 1.2, spin: -0.25, rot: Math.PI / 27,
-              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.3, r: 14
+              color: '#ffeebb', coreColor: '#fffbe0', shape: 'circle', interval: 1.5, r: 14
             },
             // Life Spring Infinity (H/L, Sub69): the moon erupts a full-circle
             // laser burst (52 beams). Approximated as a fast-rotating 12-beam
             // laser wheel sweeping the screen.
             {
-              t: 1.6, type: 'laser', count: 1, speed: 0, laserLen: 700, angleOffset: TAU_LOCAL / 36, interval: 3.2, warn: 1.0,
+              t: 1.6, type: 'laser', count: 1, speed: 0, laserLen: 700, angleOffset: TAU_LOCAL / 36, interval: 3.8, warn: 1.0,
               color: '#66ffcc', coreColor: '#d8fff0', shape: 'diamond'
             },
             // The aimed laser wall (Sub66): a thick beam through the boss,
             // refired on a slow cadence.
             {
-              t: 1.6, type: 'laser', count: 1, speed: 0, laserLen: 700, interval: 3.2, warn: 1, angleOffset: -TAU_LOCAL/36,
+              t: 1.6, type: 'laser', count: 1, speed: 0, laserLen: 700, interval: 3.8, warn: 1, angleOffset: -TAU_LOCAL/36,
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'diamond'
             },
             // The red fan (Sub66): a 120-bullet fan covering 17/18 of the
             // circle, centered on the anti-player direction so its 1/18-TAU
-            // GAP points at the player's t=1.6 position (aimTime). A second
-            // identical fan is shifted by exactly HALF A BULLET-PITCH
-            // (spread/(count-1)/2 = TAU/252), so every one of its bullets
-            // lands dead-center in a gap of the first fan. The two waves
-            // interlock into one 240-bullet fan whose gaps are half as wide
-            // — much harder to thread — while the big safe pocket at the aim
-            // point stays open (~18.6° instead of 20°).
-            {t: 2.6, type: 'fan', count: 120, speed: 5, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.2, angleOffset: TAU_LOCAL/2, aimTime: 1.6},
-            {t: 2.6, type: 'fan', count: 120, speed: 5, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.2, angleOffset: TAU_LOCAL/2 + TAU_LOCAL/252, aimTime: 1.6}
+            // GAP lines up with the corridor between the two lasers. The
+            // lasers fire at t=1.6 and refire every 3.2s, RE-AIMING at the
+            // player's current position each time; the fan fires 1.0s after
+            // each laser volley, so aimTime: 1.0 (a LOOKBACK delay) makes
+            // every fan volley aim at the player's position from the moment
+            // its paired laser fired — the gap stays aligned with the laser
+            // corridor on ALL refires, not just the first. A second
+            // identical fan (staggered 0.1s) is shifted by exactly HALF A
+            // BULLET-PITCH (spread/(count-1)/2 = TAU/252), so every one of
+            // its bullets lands dead-center in a gap of the first fan. It
+            // uses aimTime: 1.1 so it looks back to the SAME snapshot as the
+            // first fan (its extra 0.1s of flight time is compensated),
+            // keeping the two waves perfectly interlocked. Together they
+            // form one 240-bullet fan whose gaps are half as wide — much
+            // harder to thread — while the big safe pocket at the aim point
+            // stays open (~18.6° instead of 20°).
+            {t: 2.6, type: 'fan', count: 120, speed: 5, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.8, angleOffset: TAU_LOCAL/2, aimTime: 1.0},
+            {t: 2.7, type: 'fan', count: 120, speed: 5, spread: TAU_LOCAL*17/18, r: 10, shape: 'rice', color: '#fe8080', interval: 3.8, angleOffset: TAU_LOCAL/2 + TAU_LOCAL/252, aimTime: 1.1}
           ],
         },
         {
