@@ -1286,6 +1286,7 @@ const BOSSES = {
           name: 'Non-spell',
           duration: 17,
           hp: 130,
+          holdDur: 2.0, // light intro: short holds keep it moving
           emits: [
             { t: 0, type: 'aimed', count: 5, spread: 0.24, speed: 3.0, color: '#ffdd88', coreColor: '#fff8e0', shape: 'rice', interval: 0.4 },
             { t: 0.4, type: 'ring', count: 16, speed: 1.8, color: '#eeeeff', coreColor: '#ffffff', shape: 'circle', interval: 1.1 },
@@ -1296,6 +1297,7 @@ const BOSSES = {
           name: "Jewel from the Dragon's Neck",
           duration: 25,
           hp: 150,
+          holdDur: 3.0, // let the spinning laser cross settle, then slide
           emits: [
             // Five-color laser cross (Sub52): four beams at 90°, each cycling
             // the five dragon colors as it spins.
@@ -1335,6 +1337,7 @@ const BOSSES = {
           name: "Buddha's Stone Bowl",
           duration: 25,
           hp: 160,
+          holdDur: 3.2, // hold through one full beam re-aim cycle (3.2s)
           emits: [
             // Stop-moon laser sweeps (Sub55-57): a red beam held by the
             // stone moons, re-aimed 22.5° (TAU/16) each firing.
@@ -1364,6 +1367,7 @@ const BOSSES = {
           name: "Fire Rat's Leather Robe",
           duration: 25,
           hp: 170,
+          holdDur: 3.0, // stay put so the aimed-at-player beams are fair
           emits: [
             // Corner-moon telegraphed lasers (Sub61/64/65): white beams
             // aimed at the player, fanned across the screen.
@@ -1403,6 +1407,7 @@ const BOSSES = {
           name: "Swallow's Cowrie Shell",
           duration: 25,
           hp: 180,
+          holdDur: 3.0, // MUST be static: t=1.6 lasers + t=2.6 aimTime fan coordinate on the boss position
           emits: [
             // The Eternity Line (永命線, Sub67/68): the moon hurls two big
             // counter-rotating rings (the source fires two circles
@@ -1438,6 +1443,7 @@ const BOSSES = {
           name: 'Eternal Night Reversal',
           duration: 30,
           hp: 200,
+          holdDur: 3.5, // long card: slightly longer holds
           noBombs: true,
           emits: [
             // Penglai branch (Sub72-74): counter-rotating 16-ray rings in

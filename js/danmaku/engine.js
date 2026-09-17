@@ -495,8 +495,13 @@ class DanmakuEngine {
     //            (stable origin for the opening volley — e.g. Kaguya's
     //            Cowrie Shell lasers + aimTime fan). Targets come from the
     //            seeded RNG, so a fight always slides identically.
-    //            Params: holdDur (s, default 3), slideDur (s, default 0.6),
-    //            slideDist (px, default 140).
+    //            Params (each resolved per-card, falling back to the boss,
+    //            then a built-in): holdDur (s, default 3) — how long the
+    //            boss holds still before sliding; slideDur (s, default 0.6)
+    //            — how long the slide takes; slideDist (px, default 140) —
+    //            how far it travels. Set them on a spell card (phase object)
+    //            to tune that card's rhythm, or on the boss for a whole-fight
+    //            default.
     //  circle  — orbit around a center point (Rumia / Cirno style)
     //  erratic — Taisei-style free roam: a damped velocity is pulled by a
     //            spring toward a drifting target (move_from_towards +
@@ -514,13 +519,20 @@ class DanmakuEngine {
                   sx: b.x, sy: b.y, tx: b.x, ty: b.y };
       }
       const s = b._sl;
-      const holdDur = b.holdDur !== undefined ? b.holdDur : 3;
-      const slideDur = b.slideDur !== undefined ? b.slideDur : 0.6;
+      // Resolve the slide pacing for THIS card: the current phase may override
+      // each param, else fall back to the boss, else a built-in default. Each
+      // card can therefore be tuned to its own rhythm.
+      const ph = this.phases[this.phaseIndex];
+      const pick = (key, def) =>
+        (ph && ph[key] !== undefined) ? ph[key]
+        : (b[key] !== undefined) ? b[key] : def;
+      const holdDur = pick('holdDur', 3);
+      const slideDur = pick('slideDur', 0.6);
+      const dist = pick('slideDist', 140);
       s.t += this.step / 1000;
       if (s.holding) {
         b.x = s.x; b.y = s.y;
         if (s.t >= holdDur) {
-          const dist = b.slideDist || 140;
           s.sx = s.x; s.sy = s.y;
           s.tx = Math.max(20, Math.min(this.W - 20, s.x + (this._rnd() * 2 - 1) * dist));
           s.ty = Math.max(20, Math.min(this.H * 0.5, s.y + (this._rnd() * 2 - 1) * dist * 0.4));

@@ -6,7 +6,6 @@ global.window = { addEventListener() {}, removeEventListener() {} };
 global.performance = { now: () => 0 };
 global.requestAnimationFrame = () => 0;
 
-const { getPhases } = require('../js/danmaku/bosses.js');
 const { DanmakuEngine } = require('../js/danmaku/engine.js');
 
 let pass = 0, fail = 0;
@@ -112,6 +111,20 @@ const SLIDE = { move: 'slide', holdDur: 3, slideDur: 0.6, slideDist: 140 };
   assert(BOSSES.kaguya.move === 'slide', 'kaguya uses slide');
   assert(BOSSES.patchouli.move === 'still' && BOSSES.yuyuko.move === 'still',
     'patchouli + yuyuko are still');
+}
+
+// ── 5. Per-card (per-phase) holdDur override ────────────────────────────────
+{
+  // Boss default holdDur 3, but the card overrides to 1 -> the slide starts
+  // at t=1s (frame 60), not t=3s (frame 180).
+  const e = mkEngine({ move: 'slide', holdDur: 3, slideDur: 0.6, slideDist: 140 });
+  e.phases[0].holdDur = 1; // per-card override
+  step(e, 59); // t=0.983: still within the 1s card hold
+  assert(Math.abs(e.boss.x - 240) < 0.01,
+    'per-card: still holding at t~1s (x=' + e.boss.x.toFixed(1) + ')');
+  step(e, 3); // frame 62: past the 1s card hold -> sliding
+  assert(e.boss._sl.holding === false,
+    'per-card: slide started at the card holdDur (1s), not the boss 3s');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
