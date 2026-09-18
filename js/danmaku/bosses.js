@@ -1701,24 +1701,30 @@ const BOSSES = {
   },
 
   // ── Yukari Yakumo ────────────────────────────────────────────────────────
-  // Phantasm Stage boss of EoSD (Touhou 6). Mechanics mined from the REAL
-  // EoSD stage-7 ECL script (eosd_extract/ecl/disasm/ecldata7_utf8.txt)
-  // decoded against the decompiled ECL VM + BulletManager.
+  // PROVENANCE (corrected): these patterns were mined from the EoSD (Touhou 6)
+  // EXTRA-stage ECL script (eosd_extract/ecl/disasm/ecldata7_utf8.txt — the
+  // file is mislabeled "stage 7"; it actually holds the extra stage). That
+  // script carries 13 spell-card banners: 3 belong to Patchouli Knowledge and
+  // 10 to Flandre Scarlet. This port uses six of them — three Patchouli cards
+  // and three Flandre cards — as the moveset for OUR game's Yukari boss. They
+  // are NOT Yukari's original cards: canonically Yukari debuts as the Phantasm
+  // Stage boss of Perfect Cherry Blossom (TH07), whose spell cards are
+  // different (see refs/stages/Yukari.html). Card names/patterns below are
+  // kept as ported; only the attribution is corrected here.
   //
-  // 13 spell cards in the ECL (Sub22/23/24/33/36/39/44/48/50/54/57/60/68);
-  // this port uses the most visually distinctive six:
-  //   Moon Sign "Silent Serena" (月符「サイレントセレナ」, Sub22):
+  // The six used (ECL sub in the extra-stage script), with their true owners:
+  //   Moon Sign "Silent Serena" (月符「サイレントセレナ」, Sub22) — Patchouli:
   //     random-angle slow rings + aimed 8-way fans, moonlight palette.
-  //   Sun Sign "Royal Flare" (日符「ロイヤルフレア」, Sub23):
+  //   Sun Sign "Royal Flare" (日符「ロイヤルフレア」, Sub23) — Patchouli:
   //     rotating multi-directional streams that sweep the screen.
   //   Fire-Water-Wood-Metal-Earth Sign "Philosopher's Stone"
-  //     (火水木金土符「賢者の石」, Sub24): five sub-entities each firing
-  //     a different pattern (ring / aimed / spiral / ray / aimed).
-  //   Forbidden "Kagome Kagome" (禁忌「カゴメカゴメ」, Sub44):
+  //     (火水木金土符「賢者の石」, Sub24) — Patchouli: five sub-entities each
+  //     firing a different pattern (ring / aimed / spiral / ray / aimed).
+  //   Forbidden "Kagome Kagome" (禁忌「カゴメカゴメ」, Sub44) — Flandre:
   //     spawning gap-traps that fire 9-bullet rings + aimed 3-way fans.
-  //   Forbidden "Cranberry Trap" (禁忌「クランベリートラップ」, Sub33):
+  //   Forbidden "Cranberry Trap" (禁忌「クランベリートラップ」, Sub33) — Flandre:
   //     wandering traps that dash and fire aimed streams.
-  //   QED "Ripples of 495 Years" (ＱＥＤ「４９５年の波紋」, Sub68):
+  //   QED "Ripples of 495 Years" (ＱＥＤ「４９５年の波紋」, Sub68) — Flandre:
   //     massive 88-bullet ring waves — the finale.
   //
   // Barrage subs (Sub32/35/38/43/47/49/53/56/59) share a common pattern:

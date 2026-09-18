@@ -13,7 +13,7 @@ disassembler, opcode map, and rank-mask encoding:
 
 | Game | Release | ECL source | Disassembler | Done? |
 | --- | --- | --- | --- | --- |
-| **EoSD** (Touhou 6) | 2002 | `eosd_extract/ecl/ecldataN.ecl` | Python struct walk | Rumia (S1), Yukari (S7) |
+| **EoSD** (Touhou 6) | 2002 | `eosd_extract/ecl/ecldataN.ecl` | Python struct walk | Rumia (S1); extra-stage cards (Patchouli & Flandre) → our "Yukari" boss |
 | **MoF** (Touhou 10) | 2005 | `mof_extract/ecl/stageNN.ecl` | `thecl -d 10 -j` | Nitori (S3) |
 
 The process is identical; only the byte layout and opcode numbers differ. Every
@@ -82,11 +82,21 @@ spell **names** against `refs/stages/spell_card_descriptions.md` (§6).
 | `ecldata4` | S4 | Patchouli |
 | `ecldata5` | S5 | Alice |
 | `ecldata6` | S6 | Remilia |
-| `ecldata7` | S7 + Final | Yuyuko, Yukari, Kaguya |
+| `ecldata7` | **Extra stage** (mislabeled "S7") | **Patchouli, Flandre** |
 
 > ⚠️ **Earlier this doc wrongly listed `ecldata2` as Nitori.** It is **Cirno**.
 > Nitori is **not in EoSD at all** — she is a MoF boss (below). Always confirm a
 > stage's boss by reading its spell banners, not by position.
+
+> ⚠️ **`ecldata7` is mislabeled too.** Despite the name it is the EoSD **extra
+> stage**, not stage 7: its 13 spell banners are 3 Patchouli + 10 Flandre cards
+> (Silent Selene / Royal Flare / Philosopher's Stone = Patchouli; Cranberry Trap,
+> Lævateinn, Four of a Kind, Kagome Kagome, Maze of Love, Starbow Break,
+> Catadioptric, Clock that Ticks Away the Past, And Then Will There Be None?,
+> Ripples of 495 Years = Flandre). It contains **no Yukari cards** — Yukari is
+> not in EoSD at all; she debuts as the Phantasm Stage boss of Perfect Cherry
+> Blossom (TH07). Our game's "Yukari" boss borrows six of these extra-stage
+> cards (three Patchouli, three Flandre); see §14.3.
 
 ### MoF (Touhou 10) — 11 stages
 | ECL file | Stage | Final boss | Notes |
@@ -615,22 +625,31 @@ Verified: `node test-bosses.js` 396/0, `tmp-nitori-determinism.js` 10/0
 `tmp-nitori-density.js` max concurrent bullets 435 (normal) / 393 (lunatic),
 `tmp-engine-test2.js` 92/0.
 
-### 14.3 Yukari (EoSD, stage 7, `ecldata7.ecl`)
-Phantasm Stage boss. All 13 spell-card banners live in `ecldata7_utf8.txt`
-(Sub22/23/24/33/36/39/44/48/50/54/57/60/68). The boss container is Sub16→Sub17
-(intro) → Sub18/19 (barrage controllers) → Sub20/21 (death). The remaining
-cards are scheduled by the barrage subs (Sub32/35/38/43/47/49/53/56/59) via
-`ins_115`/`ins_116` (spell-card timeout + sub).
+### 14.3 Our "Yukari" boss (patterns from the EoSD extra stage, `ecldata7.ecl`)
 
-Spell cards used in this port (6 of 13, most visually distinctive):
-| Card | ECL sub | Key constructs |
-| --- | --- | --- |
-| Moon Sign "Silent Serena" | Sub22 | random-angle slow rings (ins_75 2×6, speed 0), aimed 8-way fan (ins_68 2×8, speed 2.7→2.0, angle −π/2) |
-| Sun Sign "Royal Flare" | Sub23 | rotating stream pairs (ins_68 1×2, speed 0, angle offset 0.52/1.05), escalating ring bursts (ins_121 13,3/5/6) |
-| Fire-Water-Wood-Metal-Earth "Philosopher's Stone" | Sub24 | five sub-entities (Sub25–29) each firing a different pattern: ring (ins_70 2×10), aimed (ins_67 6×11), spiral (ins_75 10×10), ray (ins_70 16), aimed (ins_75 13) |
-| Forbidden "Kagome Kagome" | Sub44 | spawning gap-traps (ins_95 Sub45 ×15) that fire 9-bullet rings (ins_68 1×9) + aimed 3-way fans (ins_67 9×3, speed 3.6, angle ±0.785) |
-| Forbidden "Cranberry Trap" | Sub33 | wandering traps (ins_95 Sub34 ×10) that dash and fire aimed streams (ins_67 3×6 / ins_68 1×4) |
-| QED "Ripples of 495 Years" | Sub68 | massive 88-bullet ring (ins_70 6×88, speed 1→var, angle random ±π), two counter-rotating waves (ins_121 16,0/1) |
+> ⚠️ **Corrected provenance.** `ecldata7.ecl` is mislabeled: it is the EoSD
+> (Touhou 6) **extra stage**, not stage 7. Its 13 spell-card banners are
+> **3 Patchouli + 10 Flandre** cards (Sub22/23/24 = Patchouli; Sub33/36/39/44/
+> 48/50/54/57/60/68 = Flandre). This port uses six of them — three Patchouli and
+> three Flandre — as the moveset for our game's **Yukari** boss. These are
+> **not** Yukari's original cards: canonically Yukari debuts as the Phantasm
+> Stage boss of Perfect Cherry Blossom (TH07) with different spells (see
+> `refs/stages/Yukari.html`). The card names and patterns below are kept as
+> ported; only the attribution is corrected here.
+
+All 13 spell-card banners live in `ecldata7_utf8.txt`
+(Sub22/23/24/33/36/39/44/48/50/54/57/60/68), dispatched by the stage's
+controller/barrage subs via `ins_115`/`ins_116` (spell-card timeout + sub).
+
+Spell cards used in this port (6 of 13), with their true in-game owners:
+| Card | True owner | ECL sub | Key constructs |
+| --- | --- | --- | --- |
+| Moon Sign "Silent Serena" | **Patchouli** | Sub22 | random-angle slow rings (ins_75 2×6, speed 0), aimed 8-way fan (ins_68 2×8, speed 2.7→2.0, angle −π/2) |
+| Sun Sign "Royal Flare" | **Patchouli** | Sub23 | rotating stream pairs (ins_68 1×2, speed 0, angle offset 0.52/1.05), escalating ring bursts (ins_121 13,3/5/6) |
+| Fire-Water-Wood-Metal-Earth "Philosopher's Stone" | **Patchouli** | Sub24 | five sub-entities (Sub25–29) each firing a different pattern: ring (ins_70 2×10), aimed (ins_67 6×11), spiral (ins_75 10×10), ray (ins_70 16), aimed (ins_75 13) |
+| Forbidden "Kagome Kagome" | **Flandre** | Sub44 | spawning gap-traps (ins_95 Sub45 ×15) that fire 9-bullet rings (ins_68 1×9) + aimed 3-way fans (ins_67 9×3, speed 3.6, angle ±0.785) |
+| Forbidden "Cranberry Trap" | **Flandre** | Sub33 | wandering traps (ins_95 Sub34 ×10) that dash and fire aimed streams (ins_67 3×6 / ins_68 1×4) |
+| QED "Ripples of 495 Years" | **Flandre** | Sub68 | massive 88-bullet ring (ins_70 6×88, speed 1→var, angle random ±π), two counter-rotating waves (ins_121 16,0/1) |
 
 Barrage subs (shared non-spell pattern):
 ```
