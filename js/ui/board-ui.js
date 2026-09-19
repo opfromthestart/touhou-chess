@@ -229,6 +229,13 @@ class BoardUI {
           if (this.lastMove.to.row === r && this.lastMove.to.col === c) sq.classList.add('last-to');
         }
         const piece = board.grid[r][c];
+        // King in check: tint the square under the king red so the danger is
+        // visible at a glance (even though the game has no check rule).
+        sq.classList.toggle(
+          'king-check',
+          !!(piece && piece.type === 'k' &&
+            board.squareAttacked(r, c, piece.color === 'white' ? 'black' : 'white'))
+        );
         if (piece) {
           const el = document.createElement('div');
           el.className = 'piece ' + piece.color;

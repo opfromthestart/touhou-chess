@@ -183,6 +183,7 @@ class DanmakuEngine {
     this.fieldFreeze = null; // active field-freeze window (or null)
     this._rng = mulberry32(0x9e3779b9); // re-seeded per fight in start()
     this.keys = {};
+    this.deathbombTimer = 0; // frames remaining in deathbomb window (0 = inactive)
     this._raf = null;
     this._last = 0;
     this._acc = 0;
@@ -310,6 +311,7 @@ class DanmakuEngine {
     // over into this one.
     this.keys = {};
     this.bombSeq = 0;
+    this.deathbombTimer = 0;
     this.shotPattern =
       CONFIG.SHOT_PATTERNS[playerPieceType] || CONFIG.SHOT_PATTERNS.p;
     this.phaseIndex = 0;
@@ -383,6 +385,9 @@ class DanmakuEngine {
       phaseMaxHp: this.phaseMaxHp,
       phaseTime: this.phaseTime,
       phaseDuration: this.phases[this.phaseIndex] ? this.phases[this.phaseIndex].duration : 0,
+      // Deathbomb window: >0 means the player is in a grace period where
+      // pressing bomb will negate the imminent death.
+      deathbombTimer: this.deathbombTimer,
       // Live per-card practice stats (current spell card only).
       phaseMoved: st ? st.moved : 0,
       phaseAvgDist: st && st.distSamples > 0 ? st.distSum / st.distSamples : null,
@@ -403,6 +408,7 @@ class DanmakuEngine {
     this._updateShots();
     this._updateBeams();
     this._checkCollisions();
+    this._updateDeathbomb();
     this._sampleProximity();
 
     // Phase progression: a spell card ends when its time elapses (timeout) or
@@ -1803,6 +1809,22 @@ class DanmakuEngine {
 
   _hitPlayer() {
     const p = this.player;
+    // Deathbomb window: if this hit would kill the player AND they have bombs,
+    // open an 8-frame grace window where they can press bomb to negate the
+    // death. The player stays at their current life count during the window
+    // (lives are NOT decremented yet) so they can still move and act.
+    if (p.lives <= 1 && p.bombs > 0 && this.deathbombTimer === 0) {
+      this.deathbombTimer = CONFIG.DEATHBOMB_FRAMES;
+      p.invuln = CONFIG.DEATHBOMB_FRAMES; // brief invuln to prevent multi-hit
+      this.shake = 8;
+      sfxPlay('hit');
+      // Clear nearby bullets on hit (a small mercy).
+      for (const b of this.bullets) {
+        if (Math.hypot(b.x - p.x, b.y - p.y) < 60) b.active = false;
+      }
+      return; // don't decrement lives yet — deathbomb window is open
+    }
+    // Normal hit: decrement lives and grant invulnerability.
     p.lives--;
     p.invuln = 90; // 1.5s invulnerability
     this.shake = 12;
@@ -1817,15 +1839,42 @@ class DanmakuEngine {
     }
   }
 
+  // Tick the deathbomb timer. Called each frame from update(). If the timer
+  // expires without a bomb, the player actually dies (lives are decremented
+  // and the fight ends). The timer is also cleared if the player bombs
+  // successfully (handled in bomb()).
+  _updateDeathbomb() {
+    if (this.deathbombTimer <= 0) return;
+    this.deathbombTimer--;
+    if (this.deathbombTimer <= 0) {
+      // Window expired without a bomb — the death goes through.
+      const p = this.player;
+      p.lives--;
+      this.shake = 15;
+      if (p.lives <= 0) {
+        p.alive = false;
+        this._end('lose');
+      }
+    }
+  }
+
   bomb() {
     const p = this.player;
     if (!p.alive || p.bombs <= 0) return;
     const phase = this.phases[this.phaseIndex];
     if (phase && phase.noBombs) return; // bombs disabled this phase (e.g. Kaguya Last Spell)
-    if (this.bombGauge < 1 && p.bombs > 1) return; // need full gauge for extra bombs
+    const isDeathbomb = this.deathbombTimer > 0;
+    // Normal bombs require a full gauge for extra bombs; deathbombs bypass
+    // this check (the player earned the grace by being on their last life).
+    if (!isDeathbomb && this.bombGauge < 1 && p.bombs > 1) return;
     sfxPlay('bomb');
     p.bombs--;
     this.bombGauge = 0;
+    // Cancel the deathbomb window if active.
+    if (isDeathbomb) {
+      this.deathbombTimer = 0;
+      this.score += 2000; // bonus for a successful deathbomb
+    }
     // Bomb clears all bullets and gives brief invulnerability.
     for (const b of this.bullets) b.active = false;
     // ...and any bombable beams (unclearable ones persist through bombs).
@@ -1907,6 +1956,26 @@ class DanmakuEngine {
       ctx.stroke();
       ctx.restore();
     }
+
+    // Deathbomb window overlay: a pulsing red vignette that intensifies as
+    // the window shrinks, signaling the urgency to press bomb. The flash
+    // frequency increases toward the end to heighten tension.
+    if (this.deathbombTimer > 0) {
+      const t = this.deathbombTimer / CONFIG.DEATHBOMB_FRAMES; // 1 → 0
+      const pulse = 0.15 + 0.25 * Math.sin(this.frame * 0.8) * t;
+      ctx.save();
+      // Red radial vignette: bright center fade, heavier at edges.
+      const grad = ctx.createRadialGradient(
+        this.W / 2, this.H / 2, this.W * 0.2,
+        this.W / 2, this.H / 2, this.W * 0.7,
+      );
+      grad.addColorStop(0, 'rgba(255,0,0,0)');
+      grad.addColorStop(1, `rgba(255,0,0,${pulse})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, this.W, this.H);
+      ctx.restore();
+    }
+
     ctx.restore();
   }
 

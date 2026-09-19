@@ -33,6 +33,10 @@ class FightUI {
           <div class="boss-hp-bar"><div class="boss-hp-fill" id="boss-hp-fill"></div></div>
         </div>
         <canvas id="danmaku-canvas" width="480" height="640"></canvas>
+        <div class="deathbomb-overlay hidden" id="deathbomb-overlay">
+          <div class="deathbomb-text">DEATHBOMB!</div>
+          <div class="deathbomb-hint">Press Space / X to cancel death</div>
+        </div>
         <div class="fight-hud">
           <div class="hud-item">Lives <span id="hud-lives"></span></div>
           <div class="hud-item">Bombs <span id="hud-bombs"></span></div>
@@ -223,6 +227,17 @@ class FightUI {
       m.querySelector('#hud-close').textContent =
         hud.phaseAvgDist === null ? '—' : Math.round(hud.phaseAvgDist) + 'px';
       m.querySelector('#hud-moved').textContent = Math.round(hud.phaseMoved) + 'px';
+    }
+    // Deathbomb overlay: pulsing "DEATHBOMB!" text when the grace window is open.
+    const dbOverlay = m.querySelector('#deathbomb-overlay');
+    if (dbOverlay) {
+      const active = hud.deathbombTimer > 0;
+      dbOverlay.classList.toggle('hidden', !active);
+      if (active) {
+        // Pulse intensity increases as the window shrinks.
+        const urgency = 1 - (hud.deathbombTimer / 8);
+        dbOverlay.style.opacity = 0.7 + urgency * 0.3;
+      }
     }
   }
 

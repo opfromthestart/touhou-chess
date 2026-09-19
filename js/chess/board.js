@@ -4,9 +4,10 @@
 // attacked square and may capture any enemy piece.
 //
 // Castle "en passant": when a king castles it passes through the middle square.
-// If an enemy piece attacks that middle square, the enemy gains a one-turn
-// special right to capture the king on the destination square (where the king
-// is now), regardless of normal attack geometry.
+// If an enemy piece attacks that middle square — or the king was already in
+// check on its starting square — the enemy gains a one-turn special right to
+// capture the king on the destination square (where the king is now),
+// regardless of normal attack geometry.
 
 const ROWS = 8;
 const COLS = 8;
@@ -124,6 +125,22 @@ class Board {
         const p = this.grid[row][col];
         if (!p || p.color !== byColor) continue;
         if (this.attacksSquare(row, col, r, c)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Is the king of `color` attacked by the enemy ("in check")? With no check
+  // rule this is purely informational (used for the red king-square highlight
+  // and the castle-en-passant starting-check condition).
+  kingInCheck(color) {
+    const enemy = color === 'white' ? 'black' : 'white';
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const p = this.grid[r][c];
+        if (p && p.type === 'k' && p.color === color) {
+          return this.squareAttacked(r, c, enemy);
+        }
       }
     }
     return false;
@@ -318,6 +335,15 @@ class Board {
     const { from, to, piece } = move;
     const captured = move.captured;
 
+    // Castle "en passant": remember whether the king started the move in
+    // check (attacked on its from square). This must be read BEFORE the king
+    // moves, because the move itself can change which squares are attacked.
+    let castleStartInCheck = false;
+    if (move.isCastle) {
+      const enemy = piece.color === 'white' ? 'black' : 'white';
+      castleStartInCheck = this.squareAttacked(from.row, from.col, enemy);
+    }
+
     // Move the piece.
     this.grid[from.row][from.col] = null;
     piece.hasMoved = true;
@@ -361,14 +387,15 @@ class Board {
 
     // Castle "en passant":
     //  1. If this move is a castle and the middle square is attacked by the
-    //     enemy, grant the enemy a one-turn capture right.
+    //     enemy — or the king started the move in check on its from square —
+    //     grant the enemy a one-turn capture right.
     //  2. Consume any existing right if the entitled color just moved
     //     (expires if not used; consumed by the capture if used).
     let newRight = null;
     if (move.isCastle) {
       const enemy = piece.color === 'white' ? 'black' : 'white';
       const middle = move.middle;
-      if (this.squareAttacked(middle.row, middle.col, enemy)) {
+      if (this.squareAttacked(middle.row, middle.col, enemy) || castleStartInCheck) {
         newRight = {
           color: enemy,
           destination: { row: to.row, col: to.col },

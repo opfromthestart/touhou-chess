@@ -89,6 +89,67 @@ function makeKnightBlack(b) {
   return { type: 'n', color: 'black', character: 'nitori', hasMoved: true };
 }
 
+console.log('--- King in check detection ---');
+{
+  const b = new Board();
+  assert(b.kingInCheck('white') === false, 'white king not in check at start');
+  assert(b.kingInCheck('black') === false, 'black king not in check at start');
+  // A black rook on e2 (row6,col4), with the white e2 pawn removed, attacks
+  // the white king on e1 (row7,col4).
+  b.grid[6][4] = null;
+  b.grid[6][4] = { type: 'r', color: 'black', character: 'remilia', hasMoved: true };
+  assert(b.kingInCheck('white') === true, 'white king in check from rook on e2');
+  assert(b.kingInCheck('black') === false, 'black king still not in check');
+}
+
+console.log('--- Castle en passant: king starts in check ---');
+{
+  const b = new Board();
+  // White castles kingside while the king is in check: black rook on e2
+  // (row6,col4) attacks e1 (row7,col4). The middle square f1 (row7,col5) is
+  // NOT attacked, so the right must come from the starting check alone.
+  b.grid[6][4] = null; // white e2 pawn
+  b.grid[7][5] = null; // f1 bishop
+  b.grid[7][6] = null; // g1 knight
+  b.grid[6][4] = { type: 'r', color: 'black', character: 'remilia', hasMoved: true };
+  assert(b.kingInCheck('white') === true, 'white king starts in check');
+  assert(b.squareAttacked(7, 5, 'black') === false, 'middle square f1 not attacked');
+  const kCastle = b.getMoves('white').find(m => m.isCastle === 'k');
+  assert(!!kCastle, 'kingside castle available while in check');
+  b.applyMove(kCastle);
+  assert(b.castleEnPassant !== null, 'castle en passant right granted from starting check');
+  assert(b.castleEnPassant.color === 'black', 'right belongs to black');
+  assert(b.castleEnPassant.destination.row === 7 && b.castleEnPassant.destination.col === 6, 'destination is g1');
+  // No black piece attacks the middle square f1, so the right is granted but
+  // not yet usable (usage requires attacking the middle square).
+  const special = b.getMoves('black').filter(m => m.castleEnPassant);
+  assert(special.length === 0, `no usable special capture yet (got ${special.length})`);
+}
+
+console.log('--- Castle en passant: checked king, checking piece uses the right ---');
+{
+  const b = new Board();
+  // Black queen on e2 (row6,col4) checks the white king on e1 AND attacks the
+  // middle square f1 (row7,col5) diagonally. After white castles kingside,
+  // the queen can capture the king on g1 via the special right.
+  b.grid[6][4] = null; // white e2 pawn
+  b.grid[7][5] = null; // f1 bishop
+  b.grid[7][6] = null; // g1 knight
+  b.grid[6][4] = { type: 'q', color: 'black', character: 'yukari', hasMoved: true };
+  assert(b.kingInCheck('white') === true, 'white king starts in check');
+  const kCastle = b.getMoves('white').find(m => m.isCastle === 'k');
+  assert(!!kCastle, 'kingside castle available');
+  b.applyMove(kCastle);
+  assert(b.castleEnPassant !== null, 'castle en passant right granted');
+  const special = b.getMoves('black').filter(m => m.castleEnPassant);
+  assert(special.length === 1, `black has 1 castle-en-passant capture (got ${special.length})`);
+  if (special.length === 1) {
+    b.applyMove(special[0]);
+    assert(b.gameOver === true, 'game over after king captured');
+    assert(b.winner === 'black', 'black wins');
+  }
+}
+
 console.log('--- King capture ends game ---');
 {
   const b = new Board();

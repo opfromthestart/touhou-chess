@@ -122,6 +122,13 @@ const CONFIG = {
   // Boss hitbox radius (for player-shot collision).
   BOSS_HITBOX: 22,
 
+  // Deathbomb window: number of frames the player has to cancel an imminent
+  // death by pressing the bomb key. In Touhou games this is typically 6-8
+  // frames (0.1-0.13s at 60fps). During this window the player can still
+  // move and bomb; if they bomb, the death is negated and the bomb's
+  // invincibility frames are granted.
+  DEATHBOMB_FRAMES: 8,
+
   // Phase length in seconds (each phase ~15-25s).
   PHASE_SECONDS: 18,
 
