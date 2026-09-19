@@ -283,7 +283,15 @@
         applyRemoteInput(data.state);
         break;
       case 'race-end':
-        // Opponent finished resolving the race (safety sync).
+        // Opponent resolved the race and is telling us the agreed outcome
+        // (safety sync). We apply it immediately so we don't have to wait for
+        // our own engine to end. This is safe: the opponent's outcome was
+        // derived from authoritative data (its own engine + our fight-result),
+        // and both clients compare the same authoritative end-times, so they
+        // agree. If we already resolved (same outcome), this is a no-op.
+        if (data.outcome === 'success' || data.outcome === 'fail') {
+          resolveRace(data.outcome, 'remote-race-end', true);
+        }
         break;
       case 'chat':
         appendChat(oppName || 'Opponent', data.text, false);
@@ -745,17 +753,27 @@
   //
   // The race is won by whoever does NOT run out of lives first. To make the
   // outcome DETERMINISTIC and IDENTICAL on both clients (no desync when both
-  // players die within the network latency window), we:
+  // players die within the network latency window), we resolve ONLY from
+  // AUTHORITATIVE data:
   //
-  //   • Measure each fight's end time in the engine's fixed-step GAME clock
-  //     (engine.time, seconds). Both clients run the SAME two fights (their
-  //     own controllable fight + a spectator copy of the opponent's), so the
-  //     game-clock end time of each fight is consistent across clients.
-  //   • Observe BOTH fights locally (own engine + spectator engine) AND accept
-  //     the opponent's authoritative 'fight-result' message as a fallback.
-  //   • Resolve by comparing the actual end times: the side that ran out of
-  //     lives at the EARLIER game-clock time loses. This is independent of the
-  //     order in which events arrive over the network.
+  //   • Each fight's end time is measured in the engine's fixed-step GAME clock
+  //     (engine.time, seconds). A result is AUTHORITATIVE for a side only when
+  //     it comes from that side's REAL engine: my own engine (local) or the
+  //     opponent's 'fight-result' message (their own engine's end).
+  //   • My spectator copy of the opponent's fight is NOT authoritative — it is
+  //     driven by delayed relayed input, so it can die earlier or later than
+  //     the real ship. It is recorded as an estimate but never decides the
+  //     race on its own. (Relying on it is exactly what desynced the logs:
+  //     each client's spectator copy died while its own engine was still alive,
+  //     so each resolved in its own favor and both players thought they won.)
+  //   • The race resolves when BOTH sides have authoritative results, by
+  //     comparing the two game-clock end-times: the side that ran out of lives
+  //     at the EARLIER time loses. Both clients compare the SAME two
+  //     authoritative times, so they always agree regardless of the order
+  //     events arrive. A single safe early-exit exists: if the opponent's
+  //     authoritative result is 'lose' and my own engine is still running, the
+  //     opponent necessarily died first, so I win now (the other client cannot
+  //     take that path and reaches the same outcome via the full comparison).
   // =========================================================================
 
   // Game-clock (seconds) at which a given engine ended. Deterministic and
@@ -772,14 +790,24 @@
     return iAmThisSide ? 'own' : 'opp';
   }
 
-  // Record a fight's outcome. For repeated 'lose' reports we keep the EARLIEST
-  // game-clock time (the true moment the ship ran out of lives).
-  function recordResult(side, result, gameTime) {
+  // Record a fight's outcome. `authoritative` marks whether this result comes
+  // from that side's REAL engine (my own engine, or the opponent's
+  // 'fight-result' message) or from my spectator copy of the opponent's fight
+  // (driven by delayed relayed input, so it can die earlier or later than the
+  // real ship). An authoritative result supersedes any prior spectator
+  // estimate; for repeated 'lose' reports we keep the EARLIEST game-clock time
+  // (the true moment the ship ran out of lives).
+  function recordResult(side, result, gameTime, authoritative) {
     if (!race || race.resolved) return;
     const existing = race.results[side];
     if (!existing) {
-      race.results[side] = { result, lossElapsed: gameTime };
-    } else if (existing.result === 'lose' && result === 'lose' && gameTime < existing.lossElapsed) {
+      race.results[side] = { result, lossElapsed: gameTime, authoritative: !!authoritative };
+    } else if (authoritative) {
+      // Authoritative result supersedes any prior (spectator) estimate.
+      existing.result = result;
+      existing.lossElapsed = gameTime;
+      existing.authoritative = true;
+    } else if (!existing.authoritative && existing.result === 'lose' && result === 'lose' && gameTime < existing.lossElapsed) {
       existing.lossElapsed = gameTime;
     }
   }
@@ -801,17 +829,37 @@
     if (!r || r !== race || r.resolved) return;
     const a = r.results.attacker;
     const d = r.results.defender;
-    const aDone = !!a, dDone = !!d;
-    // Both fights concluded -> decide by earliest 'lose' (game-clock time).
-    if (aDone && dDone) return resolveByResults(a, d);
-    // One side ran out of lives while the other engine is still running
-    // (opponent's ship alive): the deceased side necessarily ran out first.
-    // (This "premature" path is the one that desyncs when the two clients
-    // observe different first-deaths — the resolve log records which path ran.)
-    if (aDone && a.result === 'lose' && !dDone && engineRunning('defender')) return resolveRace('fail', 'premature-attacker-dead');
-    if (dDone && d.result === 'lose' && !aDone && engineRunning('attacker')) return resolveRace('success', 'premature-defender-dead');
-    // Otherwise (one finished with 'win' and the other is still fighting, or
-    // only one result so far with the other engine already stopped): wait.
+    // A side's result is AUTHORITATIVE only when it comes from that side's real
+    // engine: my own engine (local) or the opponent's 'fight-result' message.
+    // My spectator copy of the opponent's fight is NOT authoritative — it is
+    // driven by delayed relayed input, so it can die earlier or later than the
+    // real ship. It must never decide the race on its own, or the two clients
+    // can observe different first-deaths and each resolve in its own favor
+    // (the desync in desynclog/*.json: both players think they won).
+    const aAuth = !!(a && a.authoritative);
+    const dAuth = !!(d && d.authoritative);
+    // Both authoritative results present -> decide by earliest 'lose'. Both
+    // clients compare the SAME two authoritative game-clock times, so they
+    // always agree regardless of the order events arrive.
+    if (aAuth && dAuth) return resolveByResults(a, d);
+    // Safe premature: the OPPONENT's authoritative result is 'lose' (they
+    // really died) and MY OWN engine is still running (I really am alive). The
+    // opponent necessarily ran out of lives first -> I win the race. This is
+    // the only early-exit that is safe: it relies solely on authoritative
+    // signals (the opponent's message + my own engine), never on the spectator
+    // copy. The other client cannot take this path in the same scenario (its
+    // own engine is the one that died), so the two clients still agree: the
+    // non-premature client waits for both authoritative results and reaches the
+    // same outcome via resolveByResults.
+    const iAmAttacker = myColor === r.attackerColor;
+    const mySide = iAmAttacker ? 'attacker' : 'defender';
+    const oppSide = iAmAttacker ? 'defender' : 'attacker';
+    const opp = r.results[oppSide];
+    if (opp && opp.authoritative && opp.result === 'lose' && engineRunning(mySide)) {
+      return resolveRace(iAmAttacker ? 'success' : 'fail', 'premature-opp-dead');
+    }
+    // Otherwise: wait for the remaining authoritative result (it arrives when
+    // that side's real engine ends and sends its 'fight-result' message).
   }
 
   function engineRunning(side) {
@@ -830,40 +878,47 @@
     return resolveRace('fail', 'stalemate');                    // both survived -> stalemate
   }
 
-  // My own (controllable) fight ended.
+  // My own (controllable) fight ended. AUTHORITATIVE for my side.
   function onOwnEnd(result) {
     if (!race || race.resolved) return;
     const side = myColor === race.attackerColor ? 'attacker' : 'defender';
     const t = engineTime('own');
-    recordResult(side, result, t);
+    recordResult(side, result, t, true);
     nlog('race', { what: 'end-own', side, result, gameTime: round2(t) });
     // Authoritative: tell the opponent my result (game-clock time).
     TCNet.send({ type: 'fight-result', side, result, lossElapsed: t });
     scheduleResolve();
   }
 
-  // My spectator copy of the opponent's fight ended. This lets us observe the
+  // My spectator copy of the opponent's fight ended. This observes the
   // opponent's end time LOCALLY (in the shared game clock) without waiting for
-  // their message — the primary signal for cross-client consistency.
+  // their message, but it is NOT authoritative — relayed input is delayed, so
+  // the spectator ship can die earlier or later than the real one. It is
+  // recorded only as an estimate; the resolver never decides on it alone.
   function onSpectatorEnd(result) {
     if (!race || race.resolved) return;
     const side = myColor === race.attackerColor ? 'defender' : 'attacker';
     const t = engineTime('opp');
-    recordResult(side, result, t);
+    recordResult(side, result, t, false);
     nlog('race', { what: 'end-spect', side, result, gameTime: round2(t) });
     scheduleResolve();
   }
 
-  // The opponent's authoritative result (fallback in case our spectator copy
-  // did not detect the end, e.g. due to input-relay lag).
+  // The opponent's authoritative result (their real engine's end, relayed as a
+  // 'fight-result' message). AUTHORITATIVE for their side — the fallback when
+  // our spectator copy did not detect the end, e.g. due to input-relay lag.
   function onOppFightResult(side, result, lossElapsed) {
     if (!race || race.resolved) return;
-    recordResult(side, result, lossElapsed);
+    recordResult(side, result, lossElapsed, true);
     nlog('race', { what: 'result-recv', side, result, lossElapsed: round2(lossElapsed) });
     scheduleResolve();
   }
 
-  function resolveRace(outcome, path) {
+  // `fromRemote` is true when this resolution was triggered by the opponent's
+  // 'race-end' safety-sync message (see onNetMessage). In that case we apply
+  // the agreed outcome locally but do NOT echo another 'race-end' back (the
+  // opponent already resolved; re-sending would just bounce the message).
+  function resolveRace(outcome, path, fromRemote) {
     if (!race || race.resolved) return;
     race.resolved = true;
     inRace = false;
@@ -904,7 +959,10 @@
       mpLogTurn(race.attackerColor, move, mpCaptureInfo(move, race.attackerColor, false));
     }
     raceCount++;
-    TCNet.send({ type: 'race-end', outcome });
+    // Safety sync: tell the opponent the agreed outcome so it can apply it
+    // immediately, even if its own engine is still running (it cannot resolve
+    // on its own until its engine ends, which may be many seconds later).
+    if (!fromRemote) TCNet.send({ type: 'race-end', outcome });
 
     if (board.gameOver) {
       endGame(board.winner);
@@ -1093,7 +1151,7 @@
       // true first-death regardless of the order events are injected.
       debugInject(side, result, gameTime) {
         if (!race) return false;
-        recordResult(side, result, gameTime);
+        recordResult(side, result, gameTime, true);
         scheduleResolve();
         return true;
       },
