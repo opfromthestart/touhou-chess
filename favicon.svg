@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="64" height="64">
+  <!-- Touhou Chess favicon: a yin-yang whose two dots are chess pawns —
+       the black pawn in the white head, the white pawn in the black head.
+       Monochrome so it reads at 16 px on any tab background. -->
+  <defs>
+    <!-- Pawn silhouette, centered on (0,0): head, collar, tapered body, base. -->
+    <g id="pawn">
+      <circle cx="0" cy="-5.7" r="4.4"/>
+      <rect x="-3.8" y="-2.5" width="7.6" height="2.2" rx="1.1"/>
+      <path d="M -2.4,-0.3 L 2.4,-0.3 L 4.8,5.9 L -4.8,5.9 Z"/>
+      <rect x="-6.4" y="5.9" width="12.8" height="4.2" rx="2.1"/>
+    </g>
+  </defs>
+  <!-- Taiji: white base, black S-half (right half minus the upper small
+       semicircle, plus the lower small semicircle). -->
+  <circle cx="50" cy="50" r="48" fill="#ffffff"/>
+  <path d="M 50,2 A 48,48 0 0 1 50,98 A 24,24 0 0 1 50,50 A 24,24 0 0 0 50,2 Z" fill="#111111"/>
+  <!-- Pawn dots: black pawn in the white head (top), white pawn in the
+       black head (bottom). -->
+  <use href="#pawn" transform="translate(50,26) scale(1.1)" fill="#111111"/>
+  <use href="#pawn" transform="translate(50,74) scale(1.1)" fill="#ffffff"/>
+  <!-- Outline so the white half reads on light backgrounds. -->
+  <circle cx="50" cy="50" r="48" fill="none" stroke="#111111" stroke-width="2.5"/>
+</svg>

@@ -71,7 +71,7 @@ body {
 /* ===== Left icon rail ===== */
 #rail {
   flex: 0 0 100px;
-  width: 100px;
+  width: 140;
   display: flex;
   flex-direction: column;
   align-items: center;
