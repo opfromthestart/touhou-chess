@@ -23,7 +23,7 @@ the whole engine.
 
 | File | Role |
 | --- | --- |
-| `js/danmaku/engine.js` | The engine: loop, player, bullets, collision, bombs, beams, rendering, the emitter interpreter. ~1800 lines. |
+| `js/danmaku/engine.js` | The engine: loop, player, bullets, collision, bombs, beams, rendering, the emitter interpreter, and the multiplayer spectator mirror (§3.1). ~2300 lines. |
 | `js/danmaku/bosses.js` | **All 9 boss fight scripts as data** (`BOSSES` map) + `getPhases()` which applies difficulty scaling. This is where most PRs land. |
 | `js/config.js` | `DANMAKU_STATS` (lives/bombs/hitbox per piece), `SHOT_PATTERNS` (player auto-fire per piece), `DIFFICULTY` multipliers, `SURVIVAL_PRIORS` (AI win-probability estimates), roster. |
 | `js/ui/fight-ui.js` | Wires the engine into the game UI (`engine.start(...)` call, HUD, result). |
@@ -108,6 +108,32 @@ multiplayer "spectate both screens" feature fair. Consequences for your PR:
 | `speedJitter` | ± fraction of speed per bullet (0.5 ⇒ 0.5×…1.5×) |
 | `angleJitter` | ± radians per bullet |
 | `colorJitter` | ± hue degrees around the base color (hex base only) |
+
+### 3.1 Multiplayer spectator mirror
+
+In multiplayer each client runs **two** engines: its own controllable fight and a *spectator
+copy* of the opponent's fight. The spectator copy is **not** a re-simulation from relayed
+input — it is a **mirror** of the opponent's authoritative state (`spectatorMirror = true`).
+The owner relays a ship snapshot
+(`x/y/lives/bombs/invuln/focus/alive/phaseIndex/phaseTime/phaseHp/bombSeq/result`)
+piggybacked on the existing 33 ms `input` tick; the spectator engine applies it in
+`applyMirrorState()`:
+
+- **Position** is receive-time-stamped, buffered, and rendered ~66 ms into the past
+  (interpolated), so the ghost ship tracks the real ship and the emitters aim at the same
+  delayed position the field renders at.
+- **Lives/bombs/invuln/focus/phase** are applied immediately. A phase transition reuses
+  `_finalizePhase`/`_startPhase`, so both fights consume the seeded RNG in lockstep and the
+  ghost's bullet field stays aligned with the real one.
+- The mirror engine **never** runs local damage, collision, deathbomb, or bomb-gauge logic and
+  **never ends the fight on its own** — the authoritative `fight-result` message drives
+  resolution. (The old input-only re-simulation desynced: every emitter aims at the *local*
+  player, so a delayed ghost drifted into a different bullet field and died early.)
+- If a peer sends no `ship` snapshot (an older client), the spectator falls back to the legacy
+  input-only re-simulation.
+
+Regression test: `tests/mp_danmaku_mirror_test.js` (headless before/after on the same fight —
+mirror tracks the real ship and never dies earlier; input-only relay diverges).
 
 ---
 

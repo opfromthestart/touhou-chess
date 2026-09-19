@@ -200,6 +200,20 @@ class DanmakuEngine {
     // bomb edge-events across the network without dropping quick taps.
     this.bombSeq = 0;
 
+    // ── Spectator mirror (multiplayer) ─────────────────────────────────────
+    // When `spectatorMirror` is true this engine is a *display* copy of the
+    // opponent's fight: the ship is a puppet driven by applyMirrorState() with
+    // the opponent's AUTHORITATIVE ship/phase state (position, lives, bombs,
+    // invuln, phase, result). The local re-simulation only renders the bullet
+    // field — it can never damage or end the ship on its own — so the
+    // spectator's ship dies at exactly the moment the real ship dies (one relay
+    // tick later) instead of dying on its own from delayed relayed input.
+    // (Relaying raw input alone desyncs: every emitter aims at the *local*
+    // player, so a delayed ghost diverges into a different bullet field.)
+    this.spectatorMirror = false;
+    this._mirrorSamples = []; // { t, x, y } receive-time-stamped ship positions
+    this._mirrorDelay = 66;   // ms into the past the ship is rendered (≈2 relay ticks)
+
     this._onKeyDown = (e) => this._key(e, true);
     this._onKeyUp = (e) => this._key(e, false);
     // If the window loses focus mid-fight, release every key: otherwise a key
@@ -262,6 +276,87 @@ class DanmakuEngine {
       this.bombSeq = state.bombSeq;
       this.bomb();
     }
+  }
+
+  // Feed an authoritative ship/phase snapshot (from the opponent's REAL engine)
+  // into this spectator-mirror engine. Position is buffered and interpolated in
+  // _updatePlayer(); everything else is applied immediately. This is what keeps
+  // the spectator's ship synced to the real one: the local simulation only
+  // renders the bullet field and can never end the fight on its own.
+  applyMirrorState(ship) {
+    if (!ship || !this.player) return;
+    // If the spectator fight has already ended (the real fight ended, or a test
+    // forced a death), the ghost is frozen — don't re-apply the ship state (it
+    // would "resurrect" the ghost if the relay keeps sending while the real ship
+    // is still alive).
+    if (this.result) return;
+    const p = this.player;
+    // Buffer the position (rendered ~66 ms into the past in _updatePlayer).
+    this._mirrorSamples.push({ t: performance.now(), x: ship.x, y: ship.y });
+    if (this._mirrorSamples.length > 16) this._mirrorSamples.shift();
+    // Authoritative ship state (applied immediately, no interpolation).
+    p.lives = ship.lives;
+    p.bombs = ship.bombs;
+    p.invuln = ship.invuln;
+    p.focus = !!ship.focus;
+    p.alive = ship.alive !== false;
+    // Bomb edge: the real fight just bombed — clear the ghost's field the same
+    // way the real bomb does (bullets + clearable beams).
+    if (typeof ship.bombSeq === 'number' && ship.bombSeq > this.bombSeq) {
+      this.bombSeq = ship.bombSeq;
+      for (const b of this.bullets) b.active = false;
+      const ph = this.phases[this.phaseIndex];
+      if (ph && ph.beams) for (const bm of ph.beams) if (!bm.unclearable) bm._cleared = true;
+    }
+    // Phase sync: the real fight advanced to a new card (or won) — transition
+    // locally so the ghost's bullet field + RNG stream stay aligned with the
+    // real fight's (both fights consume the seeded RNG in lockstep).
+    if (typeof ship.phaseIndex === 'number' && ship.phaseIndex !== this.phaseIndex) {
+      this._finalizePhase(this.phaseIndex);
+      this.phaseIndex = ship.phaseIndex;
+      this.phaseTime = 0;
+      if (this.phaseIndex < this.phases.length) {
+        for (const b of this.bullets) b.active = false;
+        this.bullets = [];
+        this._startPhase(this.phaseIndex);
+      }
+    }
+    // Keep the ghost's phase clock aligned with the real fight's. Both run at
+    // exactly 60 fps, so the offset is constant (≈ one relay tick) and only a
+    // large drift (e.g. after a tab stall) needs correcting.
+    if (typeof ship.phaseTime === 'number' && Math.abs(ship.phaseTime - this.phaseTime) > 0.25) {
+      this.phaseTime = ship.phaseTime;
+    }
+    if (typeof ship.phaseHp === 'number') this.phaseHp = ship.phaseHp;
+    // The real fight ended: freeze the ghost's simulation at that moment. We do
+    // NOT call onEnd() here — the authoritative 'fight-result' message drives
+    // resolution; this only stops the local re-simulation so the spectator's
+    // screen freezes at the real death instead of continuing to diverge.
+    if (ship.result && !this.result) {
+      this.result = ship.result;
+      this.running = false;
+      if (this._raf) cancelAnimationFrame(this._raf);
+      this._finalizePhase(this.phaseIndex);
+    }
+  }
+
+  // Interpolated ship position for the spectator mirror: render ~66 ms into the
+  // past so the ship moves smoothly between relay ticks (and the emitters aim
+  // at where the real ship is, at the same delayed time the field is rendered).
+  _mirrorPos() {
+    const s = this._mirrorSamples;
+    if (s.length === 0) return { x: this.player.x, y: this.player.y };
+    if (s.length === 1) return { x: s[0].x, y: s[0].y };
+    const t = performance.now() - this._mirrorDelay;
+    for (let i = s.length - 1; i >= 0; i--) {
+      if (s[i].t <= t) {
+        const a = s[i], b = s[i + 1];
+        if (!b) return { x: a.x, y: a.y };
+        const f = Math.max(0, Math.min(1, (t - a.t) / Math.max(1, b.t - a.t)));
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+      }
+    }
+    return { x: s[0].x, y: s[0].y }; // t before the first sample (just started)
   }
 
   start(phases, boss, playerStats, playerPieceType, playerChar) {
@@ -405,17 +500,24 @@ class DanmakuEngine {
     this._emitPattern();
     this._updateFieldFreeze();
     this._updateBullets();
-    this._updateShots();
-    this._updateBeams();
-    this._checkCollisions();
-    this._updateDeathbomb();
-    this._updateBombGauge();
+    // In spectator-mirror mode the ship is a puppet: it has no local shots,
+    // can't be hit (bullets/beams), can't bomb, and its phase is driven by the
+    // opponent's authoritative state (applyMirrorState) — so only the bullet
+    // field is simulated locally. This is what makes the spectator's ship die
+    // exactly when the real one does instead of on its own.
+    if (!this.spectatorMirror) this._updateShots();
+    if (!this.spectatorMirror) this._updateBeams();
+    if (!this.spectatorMirror) this._checkCollisions();
+    if (!this.spectatorMirror) this._updateDeathbomb();
+    if (!this.spectatorMirror) this._updateBombGauge();
     this._sampleProximity();
 
     // Phase progression: a spell card ends when its time elapses (timeout) or
     // its HP gauge is broken (depleted by player shots). Either way we advance.
+    // In spectator-mirror mode the phase is driven by the opponent's
+    // authoritative state, so there is no local progression.
     const phase = this.phases[this.phaseIndex];
-    if (phase && (this.phaseTime >= phase.duration || this.phaseHp <= 0)) {
+    if (phase && !this.spectatorMirror && (this.phaseTime >= phase.duration || this.phaseHp <= 0)) {
       this._finalizePhase(this.phaseIndex);
       this.phaseIndex++;
       this.phaseTime = 0;
@@ -435,17 +537,27 @@ class DanmakuEngine {
     if (!p.alive) return;
     if (p.invuln > 0) p.invuln--;
     let dx = 0, dy = 0;
-    if (this.keys['arrowleft'] || this.keys['a']) dx -= 1;
-    if (this.keys['arrowright'] || this.keys['d']) dx += 1;
-    if (this.keys['arrowup'] || this.keys['w']) dy -= 1;
-    if (this.keys['arrowdown'] || this.keys['s']) dy += 1;
-    if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
+    if (!this.spectatorMirror) {
+      if (this.keys['arrowleft'] || this.keys['a']) dx -= 1;
+      if (this.keys['arrowright'] || this.keys['d']) dx += 1;
+      if (this.keys['arrowup'] || this.keys['w']) dy -= 1;
+      if (this.keys['arrowdown'] || this.keys['s']) dy += 1;
+      if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
+    }
     // Focus (holding X) slows the ship to half speed in exchange for the
     // smaller hitbox — the bullets are NOT slowed.
     const spd = p.speed * (p.focus ? 0.5 : 1);
     const px0 = p.x, py0 = p.y;
-    p.x += dx * spd;
-    p.y += dy * spd;
+    if (this.spectatorMirror) {
+      // Puppet: the position comes from the opponent's authoritative ship
+      // state (interpolated ~66 ms into the past), not from local keys.
+      const m = this._mirrorPos();
+      p.x = m.x;
+      p.y = m.y;
+    } else {
+      p.x += dx * spd;
+      p.y += dy * spd;
+    }
     p.x = Math.max(10, Math.min(this.W - 10, p.x));
     p.y = Math.max(10, Math.min(this.H - 10, p.y));
     // Record player position into the history ring buffer (capacity 600 = 10 s

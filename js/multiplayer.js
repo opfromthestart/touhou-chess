@@ -280,7 +280,7 @@
         onOppFightResult(data.side, data.result, data.lossElapsed);
         break;
       case 'input':
-        applyRemoteInput(data.state);
+        applyRemoteInput(data);
         break;
       case 'race-end':
         // Opponent resolved the race and is telling us the agreed outcome
@@ -731,6 +731,10 @@
       onEnd: (result) => onEnd(result),
     });
     engine.externalInput = externalInput;
+    // The spectator copy is a MIRROR of the opponent's real fight (driven by
+    // their authoritative ship/phase state via applyMirrorState), not a
+    // re-simulation from relayed input — so it can't diverge and die early.
+    engine.spectatorMirror = !!externalInput;
     engine.playerColor = shipColorForPiece(fight.playerPieceType);
     engine.start(fight.phases, {
       color: boss.color,
@@ -979,14 +983,49 @@
   }
 
   // ---- Input relay ----
+  // Relay my input state AND an authoritative snapshot of my real engine's
+  // ship/phase. The opponent's spectator copy is a MIRROR of this state (not a
+  // re-simulation from raw input), so their ship stays synced to mine and dies
+  // exactly when I do — no desync from delayed relayed input.
   function sendInputTick() {
     if (!inRace || !engines.own) return;
-    TCNet.send({ type: 'input', state: engines.own.getInputState() });
+    const e = engines.own;
+    const p = e.player;
+    TCNet.send({
+      type: 'input',
+      state: e.getInputState(),
+      ship: {
+        x: p.x, y: p.y,
+        lives: p.lives, bombs: p.bombs, invuln: p.invuln,
+        focus: p.focus, alive: p.alive,
+        phaseIndex: e.phaseIndex, phaseTime: e.phaseTime, phaseHp: e.phaseHp,
+        bombSeq: e.bombSeq,
+        result: e.result,
+      },
+    });
   }
 
-  function applyRemoteInput(state) {
+  // `msg` is the full 'input' message: { state: <input levels>, ship: <authoritative
+  // ship/phase snapshot> }. The `ship` snapshot (the fix) drives the spectator
+  // ship as a mirror; if it's absent (an older peer), fall back to the input
+  // levels (old behavior).
+  function applyRemoteInput(msg) {
     if (!inRace || !engines.opp) return;
-    engines.opp.applyRemoteInput(state);
+    const e = engines.opp;
+    if (msg.ship) {
+      // Authoritative mirror (the fix): the spectator ship is driven by the
+      // opponent's real engine state (position/lives/phase/result), not by
+      // relayed keys.
+      e.spectatorMirror = true;
+      e.applyMirrorState(msg.ship);
+    } else {
+      // Legacy fallback (no ship snapshot, e.g. an older peer): drive the
+      // spectator copy from relayed input levels (old behavior). The mirror
+      // engine must NOT be in mirror mode (it would ignore the keys and leave
+      // the ghost ship frozen), so disable it.
+      e.spectatorMirror = false;
+      e.applyRemoteInput(msg.state);
+    }
   }
 
   // ---- Dual-screen overlay ----
