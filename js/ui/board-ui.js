@@ -22,6 +22,7 @@ class BoardUI {
     this.promotionPending = null; // { move, choices }
     this.squares = []; // 2D array of square elements
     this._spriteCache = {}; // "charId:size" -> source canvas (drawn once)
+    this.flipped = false; // true = board rotated 180° (black's side at the bottom)
     this._build();
   }
 
@@ -56,25 +57,68 @@ class BoardUI {
         sq.className = 'square ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
         sq.dataset.row = r;
         sq.dataset.col = c;
-        // Coordinates.
-        if (c === 0) {
-          const rank = document.createElement('span');
-          rank.className = 'coord rank';
-          rank.textContent = 8 - r;
-          sq.appendChild(rank);
-        }
-        if (r === 7) {
-          const file = document.createElement('span');
-          file.className = 'coord file';
-          file.textContent = FILES[c];
-          sq.appendChild(file);
-        }
         sq.addEventListener('click', () => this._onSquareClick(r, c));
         this.boardEl.appendChild(sq);
         rowEls.push(sq);
       }
       this.squares.push(rowEls);
     }
+    this._applyOrientation();
+  }
+
+  // Lay the squares out from the current side's perspective and (re)draw the
+  // coordinate labels. `this.squares` stays logically indexed (row 0 = black's
+  // back rank, row 7 = white's), so click handlers, piece rendering, and the
+  // last-move highlight are all unaffected — only the on-screen order changes.
+  // When flipped, display cell (dr, dc) shows logical square (7-dr, 7-dc).
+  _applyOrientation() {
+    const frag = document.createDocumentFragment();
+    for (let dr = 0; dr < 8; dr++) {
+      for (let dc = 0; dc < 8; dc++) {
+        const r = this.flipped ? 7 - dr : dr;
+        const c = this.flipped ? 7 - dc : dc;
+        frag.appendChild(this.squares[r][c]);
+      }
+    }
+    this.boardEl.appendChild(frag);
+
+    // Coordinate labels: ranks along the left edge, files along the bottom edge,
+    // always read from the current viewer's perspective.
+    for (const row of this.squares) {
+      for (const sq of row) {
+        const coord = sq.querySelector('.coord');
+        if (coord) coord.remove();
+      }
+    }
+    for (let dr = 0; dr < 8; dr++) {
+      for (let dc = 0; dc < 8; dc++) {
+        const r = this.flipped ? 7 - dr : dr;
+        const c = this.flipped ? 7 - dc : dc;
+        const sq = this.squares[r][c];
+        if (dc === 0) {
+          const rank = document.createElement('span');
+          rank.className = 'coord rank';
+          rank.textContent = 8 - r;
+          sq.appendChild(rank);
+        }
+        if (dr === 7) {
+          const file = document.createElement('span');
+          file.className = 'coord file';
+          file.textContent = FILES[c];
+          sq.appendChild(file);
+        }
+      }
+    }
+  }
+
+  // Rotate the board 180° so `flipped ? 'black' : 'white'` sits at the bottom.
+  // No-op when the orientation is already correct, so it is safe to call on
+  // every render.
+  setFlipped(flipped) {
+    flipped = !!flipped;
+    if (flipped === this.flipped) return;
+    this.flipped = flipped;
+    this._applyOrientation();
   }
 
   _onSquareClick(r, c) {

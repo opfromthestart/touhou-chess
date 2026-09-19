@@ -67,7 +67,16 @@
   let helloReceived = false;
   let inputTimer = null;
   let raceStartTimer = null; // pending "danmaku incoming" beat before a race
+  let raceCountdownTimer = null; // pre-fight countdown ticker (visual only)
   let els = {};
+
+  // Network telemetry (js/net/telemetry.js) — semantic game-side events that
+  // complement the per-message send/recv records peer.js writes. No-op when
+  // telemetry.js isn't loaded.
+  function nlog(kind, data) {
+    if (typeof NetLog !== 'undefined') NetLog.push(kind, data);
+  }
+  const round2 = (x) => (typeof x === 'number' ? Math.round(x * 100) / 100 : x);
 
   // =========================================================================
   // DOM wiring
@@ -91,6 +100,8 @@
     els.joinRow = $('mp-join-row');
     els.netStatus = $('mp-net-status');
     els.fightOverlay = $('mp-fights-overlay');
+    els.countdown = $('mp-countdown');
+    els.countdownNum = $('mp-countdown-num');
     // Topbar chips (updated for PVP).
     els.chipYouName = $('chip-you-name');
     els.chipYouSub = $('chip-you-sub');
@@ -189,6 +200,10 @@
     readMyName('Player 1');
     setConnectMode('hosting');
     setNetStatus('Creating room…');
+    // Fresh debug log for this match — cleared HERE (not in beginGame) so the
+    // exported log keeps the connection handshake + net telemetry from the
+    // moment the session starts.
+    if (typeof GameLog !== 'undefined') GameLog.clear();
     window.TCNet.name = myName;
     window.TCNet.host(netHandlers());
   }
@@ -198,6 +213,7 @@
     readMyName('Player 2');
     setConnectMode('joining');
     setNetStatus('Connecting…');
+    if (typeof GameLog !== 'undefined') GameLog.clear();
     window.TCNet.name = myName;
     window.TCNet.join(code, netHandlers());
   }
@@ -214,6 +230,9 @@
     setNetStatus(detail || status, status === 'error');
     if (status === 'connected') {
       connected = true;
+      // The host's data channel only opens when the guest joins with the room
+      // code, so chime a "ding-dong" to let them know someone is here.
+      if (TCNet.role === 'host') sfxPlay('join');
       // Handshake: wait for the opponent's hello before starting.
       if (!helloReceived) { /* waiting */ }
     }
@@ -228,6 +247,7 @@
 
   function onNetClose() {
     if (gameOver) return;
+    nlog('session', { what: 'end', reason: 'disconnect' });
     if (inMultiplayer()) {
       // Tear down any in-flight race so engines/relay don't keep running.
       if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
@@ -324,9 +344,9 @@
     gameOver = false;
     inRace = false;
     captured = [];
-    // Fresh debug log for this match — PVP games were previously unlogged, so
-    // a buggy PVP game (e.g. "neither player could move") exported an empty log.
-    if (typeof GameLog !== 'undefined') GameLog.clear();
+    // (The debug log is cleared in hostGame/joinGame, before the session
+    // starts, so the net telemetry from the handshake survives.)
+    nlog('session', { what: 'game-start', myColor });
 
     board = new Board();
     board.reset();
@@ -337,6 +357,9 @@
     const boardEl = document.getElementById('board');
     ui = new BoardUI(boardEl, { onMove: onMyMove });
     ui.render(board);
+    // Each player views the board from their own side: the guest (black) sees
+    // their pieces at the bottom, the host (white) sees theirs at the bottom.
+    ui.setFlipped(myColor === 'black');
     ui.renderTrays(captured);
     ui.clearLog();
 
@@ -406,9 +429,11 @@
       // must start the race, so transmit the move too: the opponent's
       // receiveMove() also routes captures into startRace(). The board change
       // is applied later by resolveRace(), identically on both clients.
+      nlog('move', { what: 'send', from: sqName(move.from), to: sqName(move.to), captured: true });
       startRace(move);
       TCNet.send({ type: 'move', move: serializeMove(move) });
     } else {
+      nlog('move', { what: 'send', from: sqName(move.from), to: sqName(move.to), captured: false });
       applyMoveToBoard(move, myColor);
       TCNet.send({ type: 'move', move: serializeMove(move) });
       mpLogTurn(myColor, move, null);
@@ -417,8 +442,18 @@
 
   // A move from the opponent.
   function receiveMove(move) {
-    if (gameOver || inRace) return;
-    if (board.turn !== oppColor) return; // sanity: should be their turn
+    // Rejections are logged: a move dropped here (wrong turn, mid-race, or
+    // game over) is exactly how a one-move desync becomes a permanent
+    // deadlock, and it was previously invisible.
+    if (gameOver || inRace) {
+      nlog('reject', { what: 'move', reason: gameOver ? 'game-over' : 'in-race' });
+      return;
+    }
+    if (board.turn !== oppColor) {
+      nlog('reject', { what: 'move', reason: 'turn-mismatch', turn: board.turn, expected: oppColor });
+      return;
+    }
+    nlog('move', { what: 'recv', from: sqName(move.from), to: sqName(move.to), captured: !!move.captured });
     sfxPlay('move');
     if (move.captured) {
       startRace(move);
@@ -578,24 +613,58 @@
     // Build the two fights (identical on both clients).
     const fights = buildFights(move);
 
-    // Brief beat before the danmaku fires so the DEFENDER isn't blindsided —
-    // the instant their piece is captured, bullets shouldn't already be on
-    // screen. Both clients apply the same beat before the game clock starts,
-    // so it does not affect race resolution or cross-client sync.
+    // Race lifecycle telemetry: the full sequence (start → engines-start →
+    // end-own/end-spect/result-recv → resolve) on both clients is what shows
+    // whether a desync came from message timing or from divergent resolution.
+    nlog('race', {
+      what: 'start',
+      from: sqName(move.from),
+      to: sqName(move.to),
+      attacker: attackerColor,
+      boss: fights.attacker.bossId,
+    });
+
+    // Open the dual-screen window IMMEDIATELY and show a countdown; the
+    // engines (and the game clock) start when the countdown finishes. This
+    // keeps the DEFENDER from being blindsided — the window is up and counting
+    // 3-2-1 before the first bullet fires. Both clients apply the same
+    // countdown before the game clock starts, so it does not affect race
+    // resolution or cross-client sync.
     ui.setTurnIndicator('\u26a1 Capture! Danmaku incoming\u2026');
+    openFightOverlay(fights);
+    startRaceCountdown(CONFIG.DANMAKU_START_DELAY_MS);
     if (raceStartTimer) clearTimeout(raceStartTimer);
     raceStartTimer = setTimeout(() => {
       raceStartTimer = null;
-      if (!inRace || !race) return; // torn down (disconnect/leave) during the beat
+      stopRaceCountdown();
+      if (!inRace || !race) return; // torn down (disconnect/leave) during the countdown
       startEngines(fights);
+      nlog('race', { what: 'engines-start' });
 
       // Relay my input to the opponent while the race runs.
       if (inputTimer) clearInterval(inputTimer);
       inputTimer = setInterval(sendInputTick, CONFIG.MP_INPUT_INTERVAL_MS);
-
-      // Open the dual-screen overlay.
-      openFightOverlay(fights);
     }, CONFIG.DANMAKU_START_DELAY_MS);
+  }
+
+  // Show the 3-2-1 countdown over the fight window while the pre-fight
+  // countdown runs. Purely visual — the engines start on the raceStartTimer.
+  function startRaceCountdown(totalMs) {
+    stopRaceCountdown();
+    if (!els.countdown || !els.countdownNum) return;
+    els.countdown.classList.remove('hidden');
+    const endAt = performance.now() + totalMs;
+    const tick = () => {
+      const remain = Math.max(0, endAt - performance.now());
+      els.countdownNum.textContent = String(Math.max(1, Math.ceil(remain / 1000)));
+    };
+    tick();
+    raceCountdownTimer = setInterval(tick, 100);
+  }
+
+  function stopRaceCountdown() {
+    if (raceCountdownTimer) { clearInterval(raceCountdownTimer); raceCountdownTimer = null; }
+    if (els.countdown) els.countdown.classList.add('hidden');
   }
 
   // Compute the two fight parameter sets for a capture move.
@@ -737,8 +806,10 @@
     if (aDone && dDone) return resolveByResults(a, d);
     // One side ran out of lives while the other engine is still running
     // (opponent's ship alive): the deceased side necessarily ran out first.
-    if (aDone && a.result === 'lose' && !dDone && engineRunning('defender')) return resolveRace('fail');
-    if (dDone && d.result === 'lose' && !aDone && engineRunning('attacker')) return resolveRace('success');
+    // (This "premature" path is the one that desyncs when the two clients
+    // observe different first-deaths — the resolve log records which path ran.)
+    if (aDone && a.result === 'lose' && !dDone && engineRunning('defender')) return resolveRace('fail', 'premature-attacker-dead');
+    if (dDone && d.result === 'lose' && !aDone && engineRunning('attacker')) return resolveRace('success', 'premature-defender-dead');
     // Otherwise (one finished with 'win' and the other is still fighting, or
     // only one result so far with the other engine already stopped): wait.
   }
@@ -752,11 +823,11 @@
     const aLose = a.result === 'lose', dLose = d.result === 'lose';
     if (aLose && dLose) {
       // Both ran out of lives: the earlier game-clock time died first.
-      return resolveRace(a.lossElapsed <= d.lossElapsed ? 'fail' : 'success');
+      return resolveRace(a.lossElapsed <= d.lossElapsed ? 'fail' : 'success', 'both-died-earlier-loses');
     }
-    if (aLose) return resolveRace('fail');     // attacker lost, defender survived
-    if (dLose) return resolveRace('success');  // defender lost, attacker survived
-    return resolveRace('fail');                // both survived -> stalemate
+    if (aLose) return resolveRace('fail', 'attacker-lost');     // attacker lost, defender survived
+    if (dLose) return resolveRace('success', 'defender-lost');  // defender lost, attacker survived
+    return resolveRace('fail', 'stalemate');                    // both survived -> stalemate
   }
 
   // My own (controllable) fight ended.
@@ -765,6 +836,7 @@
     const side = myColor === race.attackerColor ? 'attacker' : 'defender';
     const t = engineTime('own');
     recordResult(side, result, t);
+    nlog('race', { what: 'end-own', side, result, gameTime: round2(t) });
     // Authoritative: tell the opponent my result (game-clock time).
     TCNet.send({ type: 'fight-result', side, result, lossElapsed: t });
     scheduleResolve();
@@ -778,6 +850,7 @@
     const side = myColor === race.attackerColor ? 'defender' : 'attacker';
     const t = engineTime('opp');
     recordResult(side, result, t);
+    nlog('race', { what: 'end-spect', side, result, gameTime: round2(t) });
     scheduleResolve();
   }
 
@@ -786,13 +859,26 @@
   function onOppFightResult(side, result, lossElapsed) {
     if (!race || race.resolved) return;
     recordResult(side, result, lossElapsed);
+    nlog('race', { what: 'result-recv', side, result, lossElapsed: round2(lossElapsed) });
     scheduleResolve();
   }
 
-  function resolveRace(outcome) {
+  function resolveRace(outcome, path) {
     if (!race || race.resolved) return;
     race.resolved = true;
     inRace = false;
+    // What this client decided, how, and with which results — compared against
+    // the opponent's resolve event in the exported logs, this is the smoking
+    // gun for a divergent-resolution desync.
+    nlog('race', {
+      what: 'resolve',
+      outcome,
+      path: path || null,
+      results: {
+        attacker: race.results.attacker,
+        defender: race.results.defender,
+      },
+    });
     if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
     stopEngines();
     closeFightOverlay();
@@ -898,6 +984,7 @@
   }
 
   function closeFightOverlay() {
+    stopRaceCountdown();
     if (els.fightOverlay) els.fightOverlay.classList.add('hidden');
   }
 
@@ -907,6 +994,7 @@
   function endGame(winnerColor) {
     if (gameOver) return; // idempotent: reachable via two paths (applyMove / removePiece)
     gameOver = true;
+    nlog('session', { what: 'end', reason: 'game-over', winner: winnerColor });
     if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
     stopEngines();
     closeFightOverlay();
@@ -965,7 +1053,26 @@
   if (typeof window !== 'undefined') {
     window.__MP = {
       get state() {
-        return { myColor, oppColor, myName, oppName, inRace, gameOver, raceCount, connected, board: board };
+        return {
+          myColor, oppColor, myName, oppName, inRace, gameOver, raceCount, connected, board: board,
+          // Captured-tray entries: { piece: {type,color,character}, byColor } —
+          // exposed for tests (e.g. detecting the same piece "captured" twice).
+          captured: captured.map((c) => ({
+            piece: { type: c.piece.type, color: c.piece.color, character: c.piece.character },
+            byColor: c.byColor,
+          })),
+          // Network telemetry summary (RTT stats + per-kind event counts).
+          net: (typeof NetLog !== 'undefined') ? NetLog.summary() : null,
+        };
+      },
+      // Network simulator handle (see TCNet.setSim / js/net/telemetry.js):
+      // __MP.netSim.set({ sendMs, recvMs, jitterMs, drop }) reproduces bad
+      // network conditions in-page; __MP.netSim.get() returns the current sim.
+      get netSim() {
+        return {
+          set: (o) => TCNet.setSim(o),
+          get: () => Object.assign({}, TCNet.sim),
+        };
       },
       // Test/debug handles (read-only views + a way to simulate a fight ending,
       // which is exactly what the engine calls onEnd() with on death/victory).

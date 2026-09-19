@@ -63,7 +63,11 @@ js/audio/sfx.js         — synthesized WebAudio SFX (no audio assets)
 js/ui/board-ui.js       — board render, click-to-move, highlights
 js/ui/fight-ui.js       — fight modal, HUD (lives/bombs/score/phase/banner)
 js/ui/practice-ui.js    — practice mode: fight any boss as any piece
-js/net/peer.js          — thin peerjs wrapper
+js/net/peer.js          — thin peerjs wrapper (net telemetry hooks + in-page
+                           network simulator, see "Multiplayer network
+                           telemetry" below)
+js/net/telemetry.js     — NetLog: session-scoped network event/timing log
+                           (mirrored into GameLog as `net` events)
 js/debug/log.js         — replayable game-log recording
 js/debug/replay.js      — offline replay of recorded logs
 vendor/peerjs.min.js    — vendored dependency (do not regenerate)
@@ -96,6 +100,20 @@ Headless Chromium (spawn their own static server + Chromium over CDP):
 - `node mp_desync_test.js`, `mp_p2p_test.js`, `mp_p2p_race_test.js`,
   `mp_race_resolution_test.js`, `mp_resolve_order_test.js` — multiplayer
   protocol/determinism checks.
+- `node mp_latency_test.js` — full multiplayer game over a simulated laggy
+  link (250 ms one-way by default; `LAT_MS=600 node mp_latency_test.js` for
+  heavier): a forced-outcome capture race plus natural races with bot-driven
+  input, per-move invariant checks on both clients (grid/turn/winner/
+  captured-tray agreement + piece conservation, which catches the same piece
+  "captured" twice), and a final deadlock probe (a made move must reach the
+  opponent). Built to reproduce the desync glitches in
+  `touhou-chess-log-2026-09-18T16-49-48-217Z.json`. **Exits 1 by design** —
+  the desync it reproduces is known and intentionally unfixed.
+- `node tmp-netlog-check.js` — verifies the network telemetry + simulator
+  end-to-end (28 checks): session/conn/hello/move/race events on both
+  clients, RTT + clock-offset samples, privacy (no room code / peer id /
+  display name in the exported dump), `__MP.state.net` summary, and the sim
+  (drop + sendMs delay).
 - `node cdp_eval.js <url> <expression> [settleMs]` — generic CDP driver:
   serve workspace, evaluate an expression in the page, print JSON. Use it to
   poke at any page (e.g. `test-danmaku.html`, `mp_engine_test.html`).
@@ -141,6 +159,44 @@ Before declaring pattern/engine work done: `node tmp-engine-test2.js`
 | Bishop ×2 | Sanae Kochiya, Reisen Udongein Inaba | Patchouli Knowledge, Alice Margatroid |
 | Knight ×2 | Aya Shameimaru, Hatate Himekaidou | Nitori Kawashiro, Momiji Inubashiri |
 | Pawn ×8 | Cirno (all 8) | Rumia (all 8) |
+
+## Multiplayer network telemetry & simulator
+
+Multiplayer sessions log **network events and timings** into `GameLog` (as
+`type: 'net'` events) via `NetLog` (`js/net/telemetry.js`, hooks in
+`js/net/peer.js` + `js/multiplayer.js`). Purpose: an exported log
+(`#btn-export-log`) shows what the network was doing when a desync/glitch
+happened, and the two clients' logs can be aligned to reconstruct true
+one-way message times.
+
+- **Events** (`kind` field): `session` (start/end + summary), `conn`
+  (peer-open/inbound/open/close/error/signaling-lost), `send`/`recv`
+  (message type + byte size), `rtt` (ms + clock offset), `race`
+  (start/engines-start/end-own/end-spect/result-recv/resolve), `move`
+  (send/recv with from/to squares), `reject` (dropped messages + reason),
+  `sim` (simulator set/drop), `browser` (online/offline/tab-hidden).
+  Each event's `t` is ms since **that client's** session start.
+- **Privacy (hard rule):** no peer IDs, room codes, display names, or IPs
+  anywhere in net events — only message types, byte sizes, timestamps, and
+  error *types* (never error text). `tmp-netlog-check.js` enforces this.
+- **Clock alignment:** both sides ping every 2 s; each pinger computes
+  `rtt` (exact, own clock) and `offset` = peer clock − our clock (NTP-style,
+  assumes symmetric one-way delay). To align two exported logs:
+  `t_peer_clock = t_our_log + offset_our_log`. Note the two clients'
+  session-start times differ too, so raw `t` values are not directly
+  comparable across logs — use the offset (and for delays, compare
+  same-log deltas or differences of like-for-like pairs).
+- **Simulator:** `__MP.netSim.set({ sendMs, recvMs, jitterMs, drop })`
+  (or `TCNet.setSim(...)`) applies artificial one-way delays / ±jitter /
+  independent send+receive drop probability in-page, to reproduce bad
+  network conditions. `__MP.netSim.get()` returns the current sim. The sim
+  sits *inside* `TCNet` (after the `send`/`recv` log events), so a dropped
+  message still shows a `recv` event plus a `sim drop-recv` event; a delayed
+  send shows the `send` event at call time, then the message arrives later.
+- `__MP.state.net` is a live summary (`{ elapsedMs, counts, rtt: { count,
+  min, avg, max, jitter, offset } }`).
+- `replay.js` only reads `type === 'turn'` events, so `net` events are
+  ignored by replays (they exist for diagnosis, not playback).
 
 ## Conventions & gotchas
 

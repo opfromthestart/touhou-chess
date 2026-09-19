@@ -147,6 +147,15 @@
         tone(ctx, { freq: 2217.46, dur: 0.3, type: 'sine', vol: 0.04, when: 0.09 });
         break;
 
+      case 'join':
+        // "Ding-dong" doorbell: the guest joined the host's room. Two bright
+        // descending bell notes with a soft octave shimmer.
+        tone(ctx, { freq: 1318.5, dur: 0.4, type: 'sine', vol: 0.16 });
+        tone(ctx, { freq: 2637, dur: 0.25, type: 'sine', vol: 0.04 });
+        tone(ctx, { freq: 987.77, dur: 0.55, type: 'sine', vol: 0.16, when: 0.18 });
+        tone(ctx, { freq: 1975.5, dur: 0.35, type: 'sine', vol: 0.04, when: 0.18 });
+        break;
+
       case 'win':
         // Ascending major arpeggio (C-E-G-C-E) ending on a bright chord.
         [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => {

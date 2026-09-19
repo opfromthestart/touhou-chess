@@ -102,13 +102,14 @@ async function launchChrome(dbgPort) {
   await waitFor(async () => (await A.snap()).turn === 'white', 8000, 'd5 sync');
   await A.clickSq(4, 4); await sleep(120); await A.clickSq(3, 3);
   await waitFor(async () => { const sa = await A.snap(); const sb = await B.snap(); return sa.inRace && sb.inRace; }, 8000, 'race start');
-  // Wait out the danmaku-start beat so both race engines are live before we
-  // force deaths (the beat delays engine start after the capture).
+  // Wait out the danmaku-start countdown so both race engines are live before
+  // we force deaths (the countdown delays engine start after the capture;
+  // DANMAKU_START_DELAY_MS is 3000).
   await waitFor(async () => {
     const ea = await A.evalJs(`!!(window.__MP.engines && window.__MP.engines.own && window.__MP.engines.opp)`);
     const eb = await B.evalJs(`!!(window.__MP.engines && window.__MP.engines.own && window.__MP.engines.opp)`);
     return ea && eb;
-  }, 5000, 'race engines live');
+  }, 8000, 'race engines live');
   await sleep(300);
   console.log('\n=== BEFORE: race started on both sides ===');
   console.log('host:', JSON.stringify(await A.snap()));

@@ -45,6 +45,12 @@ class FightUI {
           <div class="bomb-gauge"><div class="bomb-gauge-fill" id="bomb-gauge-fill"></div></div>
         </div>
         <div class="fight-hints">Arrows / WASD move &nbsp;·&nbsp; Space / X bomb &nbsp;·&nbsp; hold Shift to focus (slower, smaller hitbox)</div>
+        <!-- Pre-fight countdown: the modal opens immediately on capture and
+             the danmaku starts when this hits zero. -->
+        <div class="fight-countdown hidden" id="fight-countdown">
+          <div class="fight-countdown-label">⚔ Danmaku incoming…</div>
+          <div class="fight-countdown-num" id="fight-countdown-num">3</div>
+        </div>
         <div class="fight-result hidden" id="fight-result">
           <div class="result-title" id="result-title"></div>
           <div class="result-sub" id="result-sub"></div>
@@ -73,6 +79,17 @@ class FightUI {
   // the full fight (0-based index into the boss's phase list). null/undefined
   // runs the whole fight.
   startFight(bossId, difficulty, playerPieceType, playerChar, onResult, practiceMode, spellIndex) {
+    // One-shot: prepare the modal and start the fight immediately (no
+    // pre-fight countdown). Board captures go through prepareFight() +
+    // beginFight() so the countdown can run in between.
+    this.prepareFight(bossId, difficulty, playerPieceType, playerChar, onResult, practiceMode, spellIndex);
+    this.beginFight();
+  }
+
+  // Show the fight modal in a "ready" state (boss header, ship, first-card
+  // banner) and start the pre-fight countdown. The engine does NOT start yet
+  // — beginFight() does that when the countdown finishes.
+  prepareFight(bossId, difficulty, playerPieceType, playerChar, onResult, practiceMode, spellIndex) {
     this._onResult = onResult;
     this._practiceMode = !!practiceMode;
     this._result = null;
@@ -85,6 +102,7 @@ class FightUI {
       phases = phases.slice(spellIndex, spellIndex + 1);
     }
     const stats = CONFIG.DANMAKU_STATS[playerPieceType] || CONFIG.DANMAKU_STATS.p;
+    this._pending = { bossId, phases, boss, stats, playerPieceType, playerChar };
 
     // Header.
     this.modal.querySelector('#boss-name').textContent = boss.name;
@@ -118,6 +136,16 @@ class FightUI {
     // phases[0] is the card actually starting (it may be a single-card slice).
     this._banner(phases[0].name, false);
 
+    this._startCountdown(CONFIG.DANMAKU_START_DELAY_MS);
+  }
+
+  // Start the engine (and the game clock) for a prepared fight and hide the
+  // countdown. No-op if prepareFight() hasn't been called (or was cancelled).
+  beginFight() {
+    if (!this._pending) return;
+    const { bossId, phases, boss, stats, playerPieceType, playerChar } = this._pending;
+    this._pending = null;
+    this._stopCountdown();
     this.engine.start(phases, {
       color: boss.color,
       bgTop: boss.bgTop,
@@ -125,6 +153,38 @@ class FightUI {
       move: boss.move,
       charId: bossId,
     }, stats, playerPieceType, playerChar);
+  }
+
+  // Cancel a prepared or live fight: stop the countdown and engine, hide the
+  // modal. Safe to call before the engine has started (stop() is a no-op then).
+  cancelFight() {
+    this._pending = null;
+    this._stopCountdown();
+    try { this.engine.stop(); } catch (e) {}
+    this.modal.classList.add('hidden');
+  }
+
+  // 3-2-1 countdown shown while the modal is up but the bullets haven't fired.
+  // Purely visual — beginFight() is the authoritative start.
+  _startCountdown(totalMs) {
+    this._stopCountdown();
+    const box = this.modal.querySelector('#fight-countdown');
+    const num = this.modal.querySelector('#fight-countdown-num');
+    if (!box || !num) return;
+    box.classList.remove('hidden');
+    const endAt = performance.now() + totalMs;
+    const tick = () => {
+      const remain = Math.max(0, endAt - performance.now());
+      num.textContent = String(Math.max(1, Math.ceil(remain / 1000)));
+    };
+    tick();
+    this._countdownTimer = setInterval(tick, 100);
+  }
+
+  _stopCountdown() {
+    if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
+    const box = this.modal.querySelector('#fight-countdown');
+    if (box) box.classList.add('hidden');
   }
 
   _banner(name, isSpell) {

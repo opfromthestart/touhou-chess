@@ -190,27 +190,31 @@
       };
     }
     ui.setTurnIndicator('Boss fight!');
-    // Brief beat before the danmaku fires so the player isn't blindsided —
-    // especially when the AI just captured one of our pieces (initiator 'ai').
-    // `inFight` is already set, so input/undo are blocked during the beat and
-    // newGame() may stop an un-started engine safely (stop() is a no-op then).
+    // Open the fight window immediately and let its countdown run; the
+    // danmaku (and the game clock) start when the countdown finishes. This
+    // keeps the player from being blindsided — especially when the AI just
+    // captured one of our pieces (initiator 'ai'). `inFight` is already set,
+    // so input/undo are blocked during the countdown and newGame() may cancel
+    // a not-yet-started fight safely (cancelFight() handles the un-started
+    // engine).
+    fight.prepareFight(bossId, difficulty, playerPieceType, playerChar, (result) => {
+      inFight = false;
+      const playerWon = result === 'win';
+      // Track the fight outcome for the game-over summary.
+      if (playerWon) fightsWon++; else fightsLost++;
+      // Adapt the AI's survival model from the actual outcome.
+      adaptSurvival(bossId, difficulty, playerWon);
+      // Record the outcome + resolution on the in-progress turn.
+      if (currentTurn && currentTurn.capture) {
+        currentTurn.capture.result = result;
+        currentTurn.capture.applyCapture =
+          (initiator === 'player') === playerWon;
+      }
+      resolveCapture(move, initiator, playerWon);
+    });
     setTimeout(() => {
       if (!inFight) return; // a new game / reset cancelled the pending fight
-      fight.startFight(bossId, difficulty, playerPieceType, playerChar, (result) => {
-        inFight = false;
-        const playerWon = result === 'win';
-        // Track the fight outcome for the game-over summary.
-        if (playerWon) fightsWon++; else fightsLost++;
-        // Adapt the AI's survival model from the actual outcome.
-        adaptSurvival(bossId, difficulty, playerWon);
-        // Record the outcome + resolution on the in-progress turn.
-        if (currentTurn && currentTurn.capture) {
-          currentTurn.capture.result = result;
-          currentTurn.capture.applyCapture =
-            (initiator === 'player') === playerWon;
-        }
-        resolveCapture(move, initiator, playerWon);
-      });
+      fight.beginFight();
     }, CONFIG.DANMAKU_START_DELAY_MS);
   }
 
@@ -407,8 +411,7 @@
   // game-over "Play Again" button.
   function newGame() {
     if (inFight) {
-      fight.engine.stop();
-      fight.modal.classList.add('hidden');
+      fight.cancelFight(); // stops the countdown + engine (no-op if not started)
       inFight = false;
     }
     if (practice) practice.close(); // don't leave the menu over a fresh board

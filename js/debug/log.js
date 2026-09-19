@@ -3,8 +3,11 @@
 // Records a replayable event stream of a game: one `turn` event per move
 // (the move, the contested boss fight if any, the capture resolution, and the
 // resulting board state), plus `ai-start` / `ai-run` events at the AI decision
-// points. A buggy game can be exported as JSON and replayed offline (see
-// replay.js) to reproduce issues such as the post-fight AI softlock.
+// points, and `net` events for multiplayer network telemetry (message
+// send/receive timings, connection lifecycle, RTT samples, race lifecycle —
+// see js/net/telemetry.js). A buggy game can be exported as JSON and replayed
+// offline (see replay.js) to reproduce issues such as the post-fight AI
+// softlock; `net` events are ignored by the replay and exist for diagnosis.
 //
 // No build step, no dependencies. Loaded as a plain <script>; in the browser
 // GameLog is a global, in Node it is module.exports.
@@ -85,6 +88,22 @@ const GameLog = {
         }
       }
       if (ev.state) line += ' | turn=' + ev.state.turn + ' over=' + ev.state.gameOver;
+      return line;
+    }
+    if (ev.type === 'net') {
+      // Compact one-line view of a net telemetry event (t = ms since session
+      // start on THIS client; the rtt `offset` aligns the two clients' logs).
+      let line = '#' + ev.seq + ' net +' + ev.t + 'ms ' + ev.kind;
+      if (ev.what) line += ' ' + ev.what;
+      if (ev.msg) line += ' ' + ev.msg + (ev.bytes != null ? '(' + ev.bytes + 'b)' : '');
+      if (ev.ms != null) line += ' rtt=' + ev.ms + 'ms';
+      if (ev.offset != null) line += ' off=' + ev.offset + 'ms';
+      if (ev.side) line += ' side=' + ev.side;
+      if (ev.result) line += ' result=' + ev.result;
+      if (ev.outcome) line += ' outcome=' + ev.outcome;
+      if (ev.path) line += ' path=' + ev.path;
+      if (ev.reason) line += ' reason=' + ev.reason;
+      if (ev.from) line += ' ' + ev.from + '\u2192' + ev.to;
       return line;
     }
     if (ev.type === 'ai-start') return '#' + ev.seq + ' startAiTurn (count=' + ev.count + ')';

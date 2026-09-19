@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Touhou Chess — Gensokyo</title>
+  <!-- Favicon: a yin-yang whose two dots are chess pawns (black pawn in the
+       white head, white pawn in the black head). SVG is the primary (crisp +
+       transparent at any size); the 64px PNG is a fallback for older browsers. -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -136,11 +141,22 @@
     <!-- Left icon rail: logo + the menu actions. -->
     <nav id="rail" aria-label="Menu">
       <div id="logo" title="Touhou Chess">
-        <svg class="logo-yinyang" viewBox="0 0 40 40" aria-hidden="true">
-          <circle cx="20" cy="20" r="18" fill="#14141c"/>
-          <path d="M20,2 A18,18 0 0 1 20,38 A9,9 0 0 1 20,20 A9,9 0 0 0 20,2 Z" fill="#f4f1ea"/>
-          <circle cx="20" cy="11" r="3" fill="#14141c"/>
-          <circle cx="20" cy="29" r="3" fill="#f4f1ea"/>
+        <!-- Same yin-yang as the favicon: the two dots are chess pawns
+             (black pawn in the white head, white pawn in the black head). -->
+        <svg class="logo-yinyang" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <g id="logo-pawn">
+              <circle cx="0" cy="-5.7" r="4.4"/>
+              <rect x="-3.8" y="-2.5" width="7.6" height="2.2" rx="1.1"/>
+              <path d="M -2.4,-0.3 L 2.4,-0.3 L 4.8,5.9 L -4.8,5.9 Z"/>
+              <rect x="-6.4" y="5.9" width="12.8" height="4.2" rx="2.1"/>
+            </g>
+          </defs>
+          <circle cx="50" cy="50" r="48" fill="#ffffff"/>
+          <path d="M 50,2 A 48,48 0 0 1 50,98 A 24,24 0 0 1 50,50 A 24,24 0 0 0 50,2 Z" fill="#111111"/>
+          <use href="#logo-pawn" transform="translate(50,26) scale(1.1)" fill="#111111"/>
+          <use href="#logo-pawn" transform="translate(50,74) scale(1.1)" fill="#ffffff"/>
+          <circle cx="50" cy="50" r="48" fill="none" stroke="#111111" stroke-width="2.5"/>
         </svg>
         <div class="logo-jp">東方囲碁</div>
         <div class="logo-en">Touhou&nbsp;Chess</div>
@@ -366,6 +382,12 @@
       </div>
     </div>
     <div class="mp-fights-hint">Move with Arrows/WASD · Space/X to bomb · hold Shift to focus. Watch your opponent’s screen on the right.</div>
+    <!-- Pre-fight countdown: the window opens immediately on capture and the
+         danmaku starts when this hits zero. -->
+    <div class="mp-countdown hidden" id="mp-countdown">
+      <div class="mp-countdown-label">⚡ Danmaku incoming…</div>
+      <div class="mp-countdown-num" id="mp-countdown-num">3</div>
+    </div>
   </div>
 
   <!-- Multiplayer: end-of-match / disconnect result (separate from the AI game-over). -->
@@ -393,6 +415,7 @@
   <script src="js/debug/replay.js"></script>
   <script src="js/main.js"></script>
   <!-- Multiplayer: PeerJS (vendored) + thin wrapper + PVP controller. -->
+  <script src="js/net/telemetry.js"></script>
   <script src="vendor/peerjs.min.js"></script>
   <script src="js/net/peer.js"></script>
   <script src="js/multiplayer.js"></script>

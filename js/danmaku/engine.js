@@ -494,7 +494,9 @@ class DanmakuEngine {
     //            every spell card, so each card opens with the boss static
     //            (stable origin for the opening volley — e.g. Kaguya's
     //            Cowrie Shell lasers + aimTime fan). Targets come from the
-    //            seeded RNG, so a fight always slides identically.
+    //            seeded RNG, so a fight always slides identically. The boss
+    //            always stays inside the top quarter of the screen and keeps
+    //            a 12.5%-of-width margin from the left/right edges.
     //            Params (each resolved per-card, falling back to the boss,
     //            then a built-in): holdDur (s, default 3) — how long the
     //            boss holds still before sliding; slideDur (s, default 0.6)
@@ -512,12 +514,18 @@ class DanmakuEngine {
     } else if (b.move === 'still') {
       b.x = this.W / 2;
     } else if (b.move === 'slide') {
+      // The sliding boss always stays clear of the side edges (12.5%
+      // margin each side) and inside the top quarter of the screen.
+      const mx = this.W * 0.125;
+      const topY = this.H * 0.25;
       // Re-arm the hold/slide cycle at every phase change (phaseIndex flip)
       // so each card starts with the boss holding still at its current spot.
       if (!b._sl || b._sl.pi !== this.phaseIndex) {
+        const cx = Math.max(mx, Math.min(this.W - mx, b.x));
+        const cy = Math.min(b.y, topY);
         b._sl = {
-          pi: this.phaseIndex, x: b.x, y: b.y, t: 0, holding: true,
-          sx: b.x, sy: b.y, tx: b.x, ty: b.y
+          pi: this.phaseIndex, x: cx, y: cy, t: 0, holding: true,
+          sx: cx, sy: cy, tx: cx, ty: cy
         };
       }
       const s = b._sl;
@@ -536,8 +544,8 @@ class DanmakuEngine {
         b.x = s.x; b.y = s.y;
         if (s.t >= holdDur) {
           s.sx = s.x; s.sy = s.y;
-          s.tx = Math.max(20, Math.min(this.W - 20, s.x + (this._rnd() * 2 - 1) * dist));
-          s.ty = Math.max(20, Math.min(this.H * 0.5, s.y + (this._rnd() * 2 - 1) * dist * 0.4));
+          s.tx = Math.max(mx, Math.min(this.W - mx, s.x + (this._rnd() * 2 - 1) * dist));
+          s.ty = Math.max(20, Math.min(topY, s.y + (this._rnd() * 2 - 1) * dist * 0.4));
           s.t = 0;
           s.holding = false;
         }

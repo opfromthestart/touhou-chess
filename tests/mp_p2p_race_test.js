@@ -116,8 +116,8 @@ async function launchChrome(dbgPort) {
     const sa = await A.state(); const sb = await B.state();
     return sa.inRace && sb.inRace;
   }, 10000, 'race to start on both sides');
-  // The danmaku-start beat delays the overlay until the race engines begin;
-  // wait for it to appear on both sides instead of a fixed short sleep.
+  // The fight window opens immediately on capture (with the pre-fight
+  // countdown); wait for it to appear on both sides instead of a fixed sleep.
   await waitFor(async () => (await A.overlayVisible()) && (await B.overlayVisible()), 5000, 'race overlays visible');
 
   // --- Collect diagnostics. ---

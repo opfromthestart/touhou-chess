@@ -162,12 +162,14 @@ const CONFIG = {
   // opponent so they can run a live spectator copy of your fight.
   MP_INPUT_INTERVAL_MS: 33,
 
-  // Brief beat (ms) between a capture landing and its danmaku fight/race
-  // starting. Without it the defender is blindsided — the bullets are already
-  // on screen the instant their piece is captured. The delay is applied
-  // symmetrically before the game clock starts, so it does not affect race
-  // resolution or cross-client sync.
-  DANMAKU_START_DELAY_MS: 800,
+  // Countdown (ms) shown INSIDE the danmaku fight window before the fight
+  // actually starts. The window opens immediately when a capture lands and
+  // shows a 3-2-1 countdown; the engines (and the game clock) start when the
+  // countdown finishes. Without it the defender is blindsided — the bullets
+  // are already on screen the instant their piece is captured. The delay is
+  // applied symmetrically before the game clock starts, so it does not affect
+  // race resolution or cross-client sync.
+  DANMAKU_START_DELAY_MS: 3000,
 };
 
 // Export for Node (tests); in the browser CONFIG is a global.

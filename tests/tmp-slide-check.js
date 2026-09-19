@@ -66,8 +66,8 @@ const SLIDE = { move: 'slide', holdDur: 3, slideDur: 0.6, slideDist: 140 };
   const endX = e.boss.x, endY = e.boss.y;
   assert(e.boss._sl.holding === true, 'slide complete, back to holding');
   assert(Math.abs(endX - 240) > 20, 'boss reached a new position after slide (x=' + endX.toFixed(1) + ')');
-  assert(endX >= 20 && endX <= 460 && endY >= 20 && endY <= 320,
-    'slide target within top region (' + endX.toFixed(1) + ',' + endY.toFixed(1) + ')');
+  assert(endX >= 60 && endX <= 420 && endY >= 20 && endY <= 160,
+    'slide target in top quarter, clear of side edges (' + endX.toFixed(1) + ',' + endY.toFixed(1) + ')');
   step(e, 120); // t=5.83: still in the second hold (ends at frame 397)
   assert(Math.abs(e.boss.x - endX) < 0.01 && Math.abs(e.boss.y - endY) < 0.01,
     'boss holds still after sliding (x=' + e.boss.x.toFixed(1) + ', was ' + endX.toFixed(1) + ')');
@@ -88,6 +88,18 @@ const SLIDE = { move: 'slide', holdDur: 3, slideDur: 0.6, slideDist: 140 };
     return pts.join('|');
   };
   assert(traj() === traj(), 'two identical slide fights produce identical trajectories');
+}
+
+// ── 2b. Bounds: boss stays in the top quarter, clear of side edges ─────────
+{
+  const e = mkEngine(SLIDE);
+  let inBounds = true;
+  for (let f = 0; f < 60 * 60; f++) {
+    e.frame++; e.time += 1 / 60; e.phaseTime += 1 / 60;
+    e._updatePlayer(); e._updateBoss(); e._emitPattern(); e._updateBullets();
+    if (e.boss.x < 60 || e.boss.x > 420 || e.boss.y < 20 || e.boss.y > 160) inBounds = false;
+  }
+  assert(inBounds, 'boss stays in top quarter, clear of side edges, every frame');
 }
 
 // ── 3. Phase change re-arms the cycle (boss holds at card start) ────────────

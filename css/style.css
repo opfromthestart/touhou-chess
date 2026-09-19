@@ -70,8 +70,8 @@ body {
 
 /* ===== Left icon rail ===== */
 #rail {
-  flex: 0 0 86px;
-  width: 86px;
+  flex: 0 0 100px;
+  width: 100px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -684,6 +684,35 @@ button:active { transform: translateY(1px); }
   width: auto;
 }
 
+/* Pre-fight countdown: the modal is open but the bullets haven't fired yet. */
+.fight-countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(5, 5, 12, 0.78);
+  border-radius: 12px;
+  pointer-events: none;
+}
+.fight-countdown-label {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+.fight-countdown-num {
+  font-size: 96px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 24px rgba(245, 197, 66, 0.8);
+}
+
 .spell-banner {
   height: 26px;
   display: flex;
@@ -841,7 +870,7 @@ button:active { transform: translateY(1px); }
 /* ===== Responsive ===== */
 @media (max-width: 1120px) {
   #side-panel { flex-basis: 280px; width: 280px; }
-  #rail { flex-basis: 76px; width: 76px; }
+  #rail { flex-basis: 88px; width: 88px; }
 }
 
 @media (max-width: 900px) {
@@ -1062,6 +1091,34 @@ button:active { transform: translateY(1px); }
   text-align: center;
   max-width: 640px;
   line-height: 1.4;
+}
+
+/* Pre-fight countdown: the window is open but the danmaku hasn't started.
+   Sits over both panels (no background — the matchup stays visible). */
+.mp-countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.mp-countdown-label {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--accent-2);
+  text-shadow: 0 0 12px rgba(245, 197, 66, 0.6);
+}
+.mp-countdown-num {
+  font-size: 110px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 30px rgba(245, 197, 66, 0.9);
 }
 
 /* Stack the two fight screens on narrow screens. */
