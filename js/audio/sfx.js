@@ -124,6 +124,13 @@
         tone(ctx, { freq: 2300, slideTo: 2900, dur: 0.06, type: 'sine', vol: 0.04 });
         break;
 
+      case 'powerup':
+        // Extra-bomb pickup: a bright two-note "ding-ding" rise.
+        tone(ctx, { freq: 1046.5, dur: 0.12, type: 'triangle', vol: 0.12 });
+        tone(ctx, { freq: 1567.98, dur: 0.18, type: 'triangle', vol: 0.12, when: 0.08 });
+        tone(ctx, { freq: 3135.96, dur: 0.18, type: 'sine', vol: 0.04, when: 0.08 });
+        break;
+
       case 'hit':
         // Deep thud with a descending body + low thump noise.
         tone(ctx, { freq: 240, slideTo: 60, dur: 0.32, type: 'sine', vol: 0.3 });

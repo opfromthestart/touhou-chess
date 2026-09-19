@@ -160,7 +160,7 @@
   e5.stop();
   e6.stop();
 
-  // --- Deathbomb: 8-frame grace window to cancel an imminent death. ---
+  // --- Deathbomb: 8-frame grace window to cancel a hit just taken. ---
   // Case 1: player has 1 life + 1 bomb, gets hit → deathbomb window opens,
   // player survives if they bomb within the window.
   const eDb1 = new DanmakuEngine(canvas, {});
@@ -245,7 +245,8 @@
     ok('deathbomb: expired window → fight ends in loss');
   else fail('deathbomb: expired window did not end fight (result=' + eDb3.result + ')');
 
-  // Case 4: player has 2+ lives, gets hit → normal hit (no deathbomb window).
+  // Case 4: player has 2+ lives + a bomb, gets hit → the window opens on ANY
+  // hit (the hit is held, no life lost yet).
   const eDb4 = new DanmakuEngine(canvas, {});
   eDb4.start(getPhases('rumia', 'normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
   eDb4.stop();
@@ -256,12 +257,30 @@
   eDb4.deathbombTimer = 0;
   eDb4.bullets = [makeBullet(eDb4.player.x, eDb4.player.y, 0, 0, { r: 4 })];
   eDb4._checkCollisions();
-  if (eDb4.player.lives === 2)
-    ok('deathbomb: hit with 2+ lives → normal hit (lives decremented)');
-  else fail('deathbomb: 2+ lives case should decrement (lives=' + eDb4.player.lives + ')');
-  if (eDb4.deathbombTimer === 0)
-    ok('deathbomb: 2+ lives → no deathbomb window');
-  else fail('deathbomb: 2+ lives should not open window (timer=' + eDb4.deathbombTimer + ')');
+  if (eDb4.deathbombTimer === CONFIG.DEATHBOMB_FRAMES)
+    ok('deathbomb: hit with 2+ lives opens the window');
+  else fail('deathbomb: 2+ lives case should open window (timer=' + eDb4.deathbombTimer + ')');
+  if (eDb4.player.lives === 3)
+    ok('deathbomb: hit held — lives NOT decremented yet');
+  else fail('deathbomb: held hit should not decrement (lives=' + eDb4.player.lives + ')');
+
+  // Case 5: player has 2+ lives + no bombs, gets hit → normal hit (no window).
+  const eDb5 = new DanmakuEngine(canvas, {});
+  eDb5.start(getPhases('rumia', 'normal'), bossCfg, CONFIG.DANMAKU_STATS.k, 'k');
+  eDb5.stop();
+  eDb5.player.alive = true;
+  eDb5.player.lives = 3;
+  eDb5.player.bombs = 0;
+  eDb5.player.invuln = 0;
+  eDb5.deathbombTimer = 0;
+  eDb5.bullets = [makeBullet(eDb5.player.x, eDb5.player.y, 0, 0, { r: 4 })];
+  eDb5._checkCollisions();
+  if (eDb5.player.lives === 2)
+    ok('deathbomb: no bombs + 2+ lives → normal hit (lives decremented)');
+  else fail('deathbomb: no-bomb case should decrement (lives=' + eDb5.player.lives + ')');
+  if (eDb5.deathbombTimer === 0)
+    ok('deathbomb: no bombs → no deathbomb window');
+  else fail('deathbomb: no-bomb case should not open window (timer=' + eDb5.deathbombTimer + ')');
 
   log('ALL DANMAKU TESTS PASSED');
   resultEl.style.background = 'lime';

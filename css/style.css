@@ -722,51 +722,6 @@ button:active { transform: translateY(1px); }
   text-shadow: 0 0 24px rgba(245, 197, 66, 0.8);
 }
 
-/* Deathbomb window overlay: pulsing "DEATHBOMB!" text when the grace period
-   is open. Positioned over the canvas, similar to the countdown overlay but
-   with a red tint to signal urgency. */
-.deathbomb-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  pointer-events: none;
-  animation: deathbomb-pulse 0.15s ease-in-out infinite alternate;
-}
-.deathbomb-text {
-  font-size: 48px;
-  font-weight: 800;
-  letter-spacing: 4px;
-  color: #ff3333;
-  text-shadow:
-    0 0 12px rgba(255, 51, 51, 0.9),
-    0 0 24px rgba(255, 51, 51, 0.5),
-    0 0 48px rgba(255, 0, 0, 0.3);
-  animation: deathbomb-text-pulse 0.2s ease-in-out infinite alternate;
-}
-.deathbomb-hint {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: #ffaaaa;
-  text-shadow: 0 0 8px rgba(255, 51, 51, 0.6);
-}
-@keyframes deathbomb-pulse {
-  from { opacity: 0.7; }
-  to   { opacity: 1; }
-}
-@keyframes deathbomb-text-pulse {
-  from { transform: scale(1); }
-  to   { transform: scale(1.05); }
-}
-
 .spell-banner {
   height: 26px;
   display: flex;

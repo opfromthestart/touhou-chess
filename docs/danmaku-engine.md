@@ -58,12 +58,17 @@ The player ship starts bottom-center (240, 580); the boss defaults to top-center
    (`CONFIG.SHOT_PATTERNS[pieceType]`: Reimu homing orbs, Marisa's continuous laser, …).
    Shots damage the current card's gauge and can destroy *destructible* bullets.
 3. **Bombs** (Space / X) clear all bullets and bombable beams, grant 2 s of invulnerability.
-   Extra bombs (beyond the first) require a full bomb gauge, which graze fills (+0.02 per
-   graze). A phase may set `noBombs: true` (Kaguya's last spell).
+   Every bomb in stock is usable immediately — the gauge never gates existing bombs.
+   A phase may set `noBombs: true` (Kaguya's last spell).
 4. **Hits** cost one life, grant 1.5 s invulnerability, and clear bullets within 60 px of the
-   ship (a small mercy). Losing all lives = lose.
+   ship (a small mercy). **But** if the player has a bomb, the hit instead opens the
+   8-frame **deathbomb window**: the hit is held (no life lost yet) and the player can still
+   move; bombing within the window cancels the hit entirely (life preserved, +2000 score).
+   If the window expires, the hit goes through with normal invulnerability. The window opens
+   on *any* hit, not just the lethal one. Losing all lives = lose.
 5. **Graze** (a bullet passing through the 10 px band just outside its collision envelope with
-   the ship) scores points and fills the bomb gauge (+0.02 per graze).
+   the ship) scores points and fills the bomb gauge (+0.02 per graze). A full gauge earns one
+   extra bomb and resets to empty — the gauge is a reward, not a gate.
 6. **Bullets despawn when they leave the screen or the card ends** — not on a timer (Touhou
    convention). Do not use `life` to kill bullets mid-screen; it exists for special cases only
    (§4.2): laser segments, homing/stationary bullets that never reach the screen edge, and

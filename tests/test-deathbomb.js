@@ -84,7 +84,7 @@ console.log('--- Deathbomb: 8-frame grace window ---');
   e._checkCollisions();
 
   assert(e.deathbombTimer === CONFIG.DEATHBOMB_FRAMES,
-    'hit on last life opens ' + CONFIG.DEATHBOMB_FRAMES + '-frame window (got ' + e.deathbombTimer + ')');
+    'hit with a bomb opens ' + CONFIG.DEATHBOMB_FRAMES + '-frame window (got ' + e.deathbombTimer + ')');
   assert(e.player.lives === 1,
     'lives NOT decremented during window (got ' + e.player.lives + ')');
   assert(e.player.alive === true,
@@ -151,34 +151,81 @@ console.log('--- Deathbomb: 8-frame grace window ---');
     'expired window → fight ends in loss (result=' + e.result + ')');
 }
 
-// Case 5: 2+ lives → normal hit (no deathbomb window).
+// Case 5: 2+ lives + a bomb → the window opens on ANY hit (hit held, no life lost yet).
 {
   const e = makeTestEngine(3, 1);
   e.bullets.push(makeBullet(e.player.x, e.player.y, 0, 0, { r: 4 }));
   e._checkCollisions();
 
-  assert(e.player.lives === 2,
-    '2+ lives → normal hit, lives decremented (got ' + e.player.lives + ')');
-  assert(e.deathbombTimer === 0,
-    '2+ lives → no deathbomb window (got ' + e.deathbombTimer + ')');
+  assert(e.deathbombTimer === CONFIG.DEATHBOMB_FRAMES,
+    'hit on 2+ lives opens the window (got ' + e.deathbombTimer + ')');
+  assert(e.player.lives === 3,
+    'hit is held: life NOT decremented yet (got ' + e.player.lives + ')');
   assert(e.player.alive === true,
-    '2+ lives → player survives');
+    'player alive during window');
 }
 
-// Case 6: deathbomb bypasses bomb gauge requirement.
+// Case 5b: 2+ lives + no bombs → normal hit (no window).
 {
-  const e = makeTestEngine(1, 2); // 2 bombs, gauge not full
-  e.bombGauge = 0; // gauge empty
+  const e = makeTestEngine(3, 0);
+  e.bullets.push(makeBullet(e.player.x, e.player.y, 0, 0, { r: 4 }));
+  e._checkCollisions();
+
+  assert(e.player.lives === 2,
+    'no bombs → normal hit, lives decremented (got ' + e.player.lives + ')');
+  assert(e.deathbombTimer === 0,
+    'no bombs → no deathbomb window (got ' + e.deathbombTimer + ')');
+  assert(e.player.alive === true,
+    'player survives');
+}
+
+// Case 5c: window expires with 2+ lives → the held hit lands, player survives
+// with normal invulnerability.
+{
+  const e = makeTestEngine(3, 1);
   e.bullets.push(makeBullet(e.player.x, e.player.y, 0, 0, { r: 4 }));
   e._checkCollisions();
   assert(e.deathbombTimer > 0, 'precondition: window is open');
 
+  for (let i = 0; i < CONFIG.DEATHBOMB_FRAMES; i++) {
+    e.bullets = []; // clear bullets so no re-hit
+    e._updateDeathbomb();
+  }
+
+  assert(e.player.lives === 2,
+    'expired window → held hit lands, lives decremented (got ' + e.player.lives + ')');
+  assert(e.player.alive === true,
+    'expired window → player survives with 2+ lives');
+  assert(e.player.invuln > 0,
+    'expired window → normal invulnerability granted (invuln=' + e.player.invuln + ')');
+  assert(e.result === null,
+    'expired window → fight continues (result=' + e.result + ')');
+}
+
+// Case 6: bombs are never gated by the gauge — a normal bomb works with an
+// empty gauge and multiple bombs in stock.
+{
+  const e = makeTestEngine(3, 2); // 3 lives, 2 bombs, gauge not full
+  e.bombGauge = 0; // gauge empty
+
   e.bomb();
 
   assert(e.player.bombs === 1,
-    'deathbomb bypasses gauge: bomb consumed (got ' + e.player.bombs + ')');
-  assert(e.player.lives === 1,
-    'deathbomb bypasses gauge: life preserved (got ' + e.player.lives + ')');
+    'normal bomb works with empty gauge (got ' + e.player.bombs + ')');
+  assert(e.player.lives === 3,
+    'normal bomb does not cost a life (got ' + e.player.lives + ')');
+}
+
+// Case 6b: a full gauge earns an extra bomb and resets.
+{
+  const e = makeTestEngine(3, 2);
+  e.bombGauge = 1; // gauge full
+  e._updateBombGauge();
+
+  assert(e.player.bombs === 3,
+    'full gauge grants an extra bomb (got ' + e.player.bombs + ')');
+  assert(e.bombGauge === 0,
+    'gauge resets after granting (got ' + e.bombGauge + ')');
 }
 
 // Case 7: deathbomb respects noBombs phase.

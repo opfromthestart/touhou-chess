@@ -386,7 +386,7 @@ class DanmakuEngine {
       phaseTime: this.phaseTime,
       phaseDuration: this.phases[this.phaseIndex] ? this.phases[this.phaseIndex].duration : 0,
       // Deathbomb window: >0 means the player is in a grace period where
-      // pressing bomb will negate the imminent death.
+      // pressing bomb will negate the hit just taken (no life lost).
       deathbombTimer: this.deathbombTimer,
       // Live per-card practice stats (current spell card only).
       phaseMoved: st ? st.moved : 0,
@@ -409,6 +409,7 @@ class DanmakuEngine {
     this._updateBeams();
     this._checkCollisions();
     this._updateDeathbomb();
+    this._updateBombGauge();
     this._sampleProximity();
 
     // Phase progression: a spell card ends when its time elapses (timeout) or
@@ -1809,11 +1810,12 @@ class DanmakuEngine {
 
   _hitPlayer() {
     const p = this.player;
-    // Deathbomb window: if this hit would kill the player AND they have bombs,
-    // open an 8-frame grace window where they can press bomb to negate the
-    // death. The player stays at their current life count during the window
-    // (lives are NOT decremented yet) so they can still move and act.
-    if (p.lives <= 1 && p.bombs > 0 && this.deathbombTimer === 0) {
+    // Deathbomb window: if the player has a bomb, ANY hit opens an 8-frame
+    // grace window where pressing bomb cancels the hit (no life lost). The hit
+    // is held during the window — lives are NOT decremented yet — so the
+    // player can still move and act. (Works on every life, not just the last:
+    // a bomb can negate any hit you take.)
+    if (p.bombs > 0 && this.deathbombTimer === 0) {
       this.deathbombTimer = CONFIG.DEATHBOMB_FRAMES;
       p.invuln = CONFIG.DEATHBOMB_FRAMES; // brief invuln to prevent multi-hit
       this.shake = 8;
@@ -1840,16 +1842,17 @@ class DanmakuEngine {
   }
 
   // Tick the deathbomb timer. Called each frame from update(). If the timer
-  // expires without a bomb, the player actually dies (lives are decremented
-  // and the fight ends). The timer is also cleared if the player bombs
-  // successfully (handled in bomb()).
+  // expires without a bomb, the held hit goes through (a life is decremented
+  // and, if that was the last one, the fight ends). The timer is also cleared
+  // if the player bombs successfully (handled in bomb()).
   _updateDeathbomb() {
     if (this.deathbombTimer <= 0) return;
     this.deathbombTimer--;
     if (this.deathbombTimer <= 0) {
-      // Window expired without a bomb — the death goes through.
+      // Window expired without a bomb — the hit lands.
       const p = this.player;
       p.lives--;
+      p.invuln = 90; // the hit went through — grant normal invulnerability
       this.shake = 15;
       if (p.lives <= 0) {
         p.alive = false;
@@ -1864,13 +1867,13 @@ class DanmakuEngine {
     const phase = this.phases[this.phaseIndex];
     if (phase && phase.noBombs) return; // bombs disabled this phase (e.g. Kaguya Last Spell)
     const isDeathbomb = this.deathbombTimer > 0;
-    // Normal bombs require a full gauge for extra bombs; deathbombs bypass
-    // this check (the player earned the grace by being on their last life).
-    if (!isDeathbomb && this.bombGauge < 1 && p.bombs > 1) return;
+    // Every bomb in stock is usable immediately — the bomb gauge no longer
+    // gates existing bombs. It's a separate reward: filling it (via graze)
+    // earns EXTRA bombs, see _updateBombGauge().
     sfxPlay('bomb');
     p.bombs--;
-    this.bombGauge = 0;
-    // Cancel the deathbomb window if active.
+    // If the deathbomb window is open, this bomb CANCELS the held hit: the
+    // life is preserved and the window closes.
     if (isDeathbomb) {
       this.deathbombTimer = 0;
       this.score += 2000; // bonus for a successful deathbomb
@@ -1884,6 +1887,19 @@ class DanmakuEngine {
     p.invuln = 120;
     this.score += 1000;
     this.shake = 8;
+  }
+
+  // The bomb gauge is a reward, not a gate: grazing fills it, and a full
+  // gauge earns one extra bomb (Touhou-style bomb pickup). Bombing does NOT
+  // drain it — it only resets when it grants a bomb.
+  _updateBombGauge() {
+    if (this.result || !this.player) return;
+    if (this.bombGauge >= 1) {
+      this.bombGauge = 0;
+      this.player.bombs++;
+      this.score += 500;
+      sfxPlay('powerup');
+    }
   }
 
   _end(result) {
@@ -1957,9 +1973,9 @@ class DanmakuEngine {
       ctx.restore();
     }
 
-    // Deathbomb window overlay: a pulsing red vignette that intensifies as
-    // the window shrinks, signaling the urgency to press bomb. The flash
-    // frequency increases toward the end to heighten tension.
+    // Deathbomb window: a brief red vignette flash while the grace window is
+    // open (no text — the mechanic is described in the help screen instead).
+    // The flash intensifies as the window shrinks.
     if (this.deathbombTimer > 0) {
       const t = this.deathbombTimer / CONFIG.DEATHBOMB_FRAMES; // 1 → 0
       const pulse = 0.15 + 0.25 * Math.sin(this.frame * 0.8) * t;
