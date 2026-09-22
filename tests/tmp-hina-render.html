@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: #2a2030; }
+  #stage { display: flex; align-items: center; justify-content: center; width: 320px; height: 320px; }
+  canvas { background: #f4efe6; border-radius: 8px; }
+</style>
+</head>
+<body>
+  <div id="stage"><canvas id="c" width="300" height="300"></canvas></div>
+  <script src="js/art/characters.js"></script>
+  <script>
+    (function () {
+      var cv = document.getElementById('c');
+      var ctx = cv.getContext('2d');
+      // 100x100 local box -> 300px, centered
+      drawCharacter(ctx, 'hina', 15, 15, (300 - 30) / 100);
+      window.__RENDERED__ = true;
+    })();
+  </script>
+</body>
+</html>

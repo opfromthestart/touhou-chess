@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: #111; }
+  #wrap { display: flex; gap: 16px; padding: 16px; }
+  .cell { text-align: center; }
+  .cell canvas { background: #0a0612; border: 1px solid #333; }
+  .cell div { color: #ccc; font: 13px monospace; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <div id="wrap"></div>
+  <script>
+    (async function () {
+      const paths = [
+        ['tmp-hina-field-amulet.json', 'Broken Amulet (t=6s)'],
+        ['tmp-hina-field-wheel.json', 'Misfortune\'s Wheel (t=8s)'],
+      ];
+      const wrap = document.getElementById('wrap');
+      for (const [p, label] of paths) {
+        const data = await (await fetch(p)).json();
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        const cv = document.createElement('canvas');
+        cv.width = data.W; cv.height = data.H;
+        const ctx = cv.getContext('2d');
+        for (const [x, y, r, color] of data.bullets) {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // player marker (white ring)
+        const [px, py] = data.player;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.stroke();
+        const d = document.createElement('div');
+        d.textContent = label + ' — ' + data.bullets.length + ' bullets';
+        cell.appendChild(cv); cell.appendChild(d);
+        wrap.appendChild(cell);
+      }
+      window.__RENDERED__ = true;
+    })();
+  </script>
+</body>
+</html>
