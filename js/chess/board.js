@@ -62,7 +62,7 @@ class Board {
     g[0][3] = makePiece('q', 'black', 'yukari');
     g[0][4] = makePiece('k', 'black', 'kaguya');
     g[0][5] = makePiece('b', 'black', 'alice');
-    g[0][6] = makePiece('n', 'black', 'momiji');
+    g[0][6] = makePiece('n', 'black', 'hina');
     g[0][7] = makePiece('r', 'black', 'yuyuko');
     for (let c = 0; c < COLS; c++) g[1][c] = makePiece('p', 'black', 'rumia');
   }

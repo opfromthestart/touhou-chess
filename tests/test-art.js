@@ -14,7 +14,7 @@ function check(name, fn) {
 
 const EXPECTED = [
   'reimu', 'marisa', 'sakuya', 'youmu', 'sanae', 'reisen', 'aya', 'hatate', 'cirno',
-  'kaguya', 'yukari', 'remilia', 'yuyuko', 'patchouli', 'alice', 'nitori', 'momiji', 'rumia',
+  'kaguya', 'yukari', 'remilia', 'yuyuko', 'patchouli', 'alice', 'nitori', 'hina', 'rumia',
 ];
 
 check('all 18 characters have a sprite entry', () => {

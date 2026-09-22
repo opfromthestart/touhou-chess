@@ -486,33 +486,59 @@ const CHAR_SPRITES = {
     },
   },
 
-  // Momiji Inubashiri — knight. Short silver hair, wolf ears, red tengu
-  // tokin, white shirt, black skirt with red flames, white shield with a
-  // red maple leaf.
-  momiji: {
+  // Hina Kagiyama — knight. A nagashi-bina (floating-doll) youkai, per the
+  // official MoF art: aquamarine hair and eyes with red bows and white frills
+  // (part of the hair tied under the chin as a front ponytail), a red dress
+  // (darker at the middle, lighter at the bottom) with white frills and an
+  // enormous white kerchief, an aquamarine "misfortune" swirl on the skirt,
+  // and knee-length black cross-laced boots.
+  hina: {
     draw(ctx) {
-      // scimitar (behind, diagonal)
-      _L(ctx, 18, 74, 46, 50, 3, '#c0c0c8');
-      // wolf ears
-      _P(ctx, [[32, 24], [38, 4], [45, 20]], '#d8d8e0');
-      _P(ctx, [[55, 20], [62, 4], [68, 24]], '#d8d8e0');
-      _P(ctx, [[35, 20], [38, 9], [42, 18]], '#a0a0b0');
-      _P(ctx, [[58, 18], [62, 9], [65, 20]], '#a0a0b0');
-      // red tokin
-      _E(ctx, 50, 25, 18, 6, 0, '#d02030');
-      _P(ctx, [[50, 5], [38, 25], [62, 25]], '#d02030');
-      // silver hair + face
-      _E(ctx, 50, 38, 19, 18, 0, '#e8e8f0');
-      _face(ctx, 50, 38, 17, '#d06030');
-      _E(ctx, 50, 29, 18, 9, 0, '#e8e8f0');
-      // body: white shirt, black skirt with red flames
-      _P(ctx, [[38, 56], [62, 56], [64, 72], [36, 72]], '#f5f5f0');
-      _P(ctx, [[36, 72], [64, 72], [68, 94], [32, 94]], '#1a1a1a');
-      _P(ctx, [[38, 94], [44, 84], [48, 94]], '#d02030');
-      _P(ctx, [[50, 94], [56, 84], [60, 94]], '#d02030');
-      // white shield with red maple leaf
-      _C(ctx, 77, 66, 11, '#f5f5f0');
-      _star(ctx, 77, 66, 6, 2.6, 5, -Math.PI / 2, '#d02030');
+      // aquamarine hair (behind the head, flowing to the waist)
+      _E(ctx, 50, 46, 25, 30, 0, '#39b8a8');
+      _E(ctx, 27, 62, 6, 17, 0.12, '#39b8a8');
+      _E(ctx, 73, 62, 6, 17, -0.12, '#39b8a8');
+      // red bows in the hair + white frills
+      _E(ctx, 43, 16, 7, 4.5, -0.5, '#d4344a');
+      _E(ctx, 57, 16, 7, 4.5, 0.5, '#d4344a');
+      _C(ctx, 50, 17, 3, '#a02030');
+      _C(ctx, 39, 21, 2.5, '#f5f5f5');
+      _C(ctx, 61, 21, 2.5, '#f5f5f5');
+      // face (aquamarine eyes) + bangs
+      _face(ctx, 50, 38, 18, '#2fa898');
+      _E(ctx, 50, 28, 20, 11, 0, '#39b8a8');
+      // long sidelocks
+      _R(ctx, 27, 42, 5, 16, '#39b8a8');
+      _R(ctx, 68, 42, 5, 16, '#39b8a8');
+      // body: red dress bodice
+      _P(ctx, [[38, 56], [62, 56], [64, 72], [36, 72]], '#c22b3a');
+      // enormous white kerchief (apron) on top
+      _P(ctx, [[41, 58], [59, 58], [62, 71], [38, 71]], '#f5f2ea');
+      // darker red waistband
+      _R(ctx, 36, 71, 28, 4, '#8e1f2c');
+      // skirt: red, lighter at the bottom
+      _P(ctx, [[35, 75], [65, 75], [70, 91], [30, 91]], '#c22b3a');
+      _P(ctx, [[31, 86], [69, 86], [70, 91], [30, 91]], '#e04a5a');
+      // white frills on the bottom of the dress
+      _C(ctx, 33, 91, 3, '#f5f5f5');
+      _C(ctx, 41, 92, 3, '#f5f5f5');
+      _C(ctx, 50, 92, 3, '#f5f5f5');
+      _C(ctx, 59, 92, 3, '#f5f5f5');
+      _C(ctx, 67, 91, 3, '#f5f5f5');
+      // aquamarine "misfortune" swirl on the skirt
+      ctx.strokeStyle = '#39b8a8'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(61, 81, 3.5, 0, ART_TAU * 0.8); ctx.stroke();
+      ctx.beginPath(); ctx.arc(61, 81, 1.4, Math.PI, ART_TAU * 1.5); ctx.stroke();
+      // front ponytail tied under the chin with a bow
+      _E(ctx, 50, 63, 4.5, 8, 0, '#39b8a8');
+      _C(ctx, 50, 55.5, 2.5, '#d4344a');
+      // knee-length black cross-laced boots
+      _R(ctx, 40, 91, 7, 9, '#1a1a1a');
+      _R(ctx, 53, 91, 7, 9, '#1a1a1a');
+      _L(ctx, 41, 93, 46, 97, 0.8, '#f5f5f5');
+      _L(ctx, 46, 93, 41, 97, 0.8, '#f5f5f5');
+      _L(ctx, 54, 93, 59, 97, 0.8, '#f5f5f5');
+      _L(ctx, 59, 93, 54, 97, 0.8, '#f5f5f5');
     },
   },
 

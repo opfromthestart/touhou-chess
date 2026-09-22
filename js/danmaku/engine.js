@@ -75,6 +75,10 @@ function makeBullet(x, y, vx, vy, opts = {}) {
     sa: opts.sa || 0,
     sr: opts.sr || 0,
     cspeed: opts.cspeed || 0,
+    // type==='curve': re-center the orbit on the boss's LIVE position every
+    // frame, so the bullet orbits the boss wherever it moves (PCCB
+    // CopyMainBossMovement — Alice's dolls circle her as she moves).
+    trackBoss: !!opts.trackBoss,
     // --- New capabilities (all optional) -----------------------------------
     // Frames the bullet stays put at its spawn point before it starts moving.
     // On release it may adopt a new direction/speed (releaseAngle/releaseSpeed)
@@ -788,12 +792,24 @@ class DanmakuEngine {
     // laser wall (aimTime: 1.0) tracks the wall's LATEST aim on every refire,
     // so the two stay aligned for the whole card — not just the first volley.
     let aimX = p.x, aimY = p.y;
-    if (em.aimTime !== undefined) {
+    // em.aimAt: 'boss' => aim directly AT the boss (inward), the inverse of
+    // aimFrom:'boss' (outward). Alice's French Dolls: the outward blue
+    // arrowhead splits into white bullets that fly back toward Alice (PCCB
+    // Sub43-45).
+    if (em.aimAt === 'boss') {
+      aimX = this.boss.x;
+      aimY = this.boss.y;
+    } else if (em.aimTime !== undefined) {
       const snap = this._playerAt(this.time - em.aimTime);
       aimX = snap.x;
       aimY = snap.y;
     }
-    const aimAngle = Math.atan2(aimY - oy, aimX - ox);
+    // em.aimFrom: 'boss' => aim radially OUTWARD from the boss (the direction
+    // from the boss through this emitter, continuing out). Alice's dolls fire
+    // along their own radius from Alice, not at the player (PCCB Sub43-45).
+    const aimAngle = (em.aimFrom === 'boss')
+      ? Math.atan2(oy - this.boss.y, ox - this.boss.x)
+      : Math.atan2(aimY - oy, aimX - ox);
     const baseAngle = (em.angle !== undefined ? em.angle : aimAngle + (em.angleOffset || 0))
       + (em.angleStep || 0) * (em._count || 0);
     // Color cycling on a GLOBAL phase clock (EoSD ins_118: a spell-wide color
@@ -1218,22 +1234,58 @@ class DanmakuEngine {
         break;
       }
       case 'doll': {
-        // A destructible shooter entity (Alice's dolls): a big bullet that
-        // flies, fires its own pattern repeatedly (em.shoot), and can be shot
-        // down to stop it.
-        const shoot = em.shoot || { type: 'aimed', count: 3, spread: 0.6, speed: 2.5 };
+        // A shooter entity (Alice's dolls): a big bullet that flies and fires
+        // its own pattern repeatedly (em.shoot). Destructible by default (the
+        // player can shoot it down to stop it) — except when em.destructible
+        // is EXPLICITLY false: then the doll is an invulnerable spell emitter
+        // (the PCCB orbiting dolls are the spell's machinery, not hazards).
+        // That matters for orbiting dolls: they circle ON the shot line to the
+        // boss, and player shots are consumed by destructible bullets, so
+        // shootable orbiting emitters let the player's own fire empty the
+        // card by killing every emitter (the French/Dutch Dolls ran dry ~8s
+        // early this way).
+        //
+        // em.orbitRadius (+ em.orbitSpeed, rad/frame) makes the doll a
+        // 'curve' mover that circles the boss at a fixed radius, re-centering
+        // on the boss's live position each frame (trackBoss) — the PCCB dolls
+        // that orbit Alice (CopyMainBossMovement). The doll appears at its
+        // orbit radius (not on the boss) and the initial velocity is ignored.
+        // em.shoot may be a single emit OR an array of emits — all fired from
+        // the doll's position on every spawnEvery tick (e.g. Yuyuko's
+        // butterflies shed a ring AND an aimed fan each tick). A single
+        // object is wrapped so both forms share the code path.
+        const shoot = Array.isArray(em.shoot)
+          ? em.shoot
+          : [em.shoot || { type: 'aimed', count: 3, spread: 0.6, speed: 2.5 }];
         const intervalFrames = Math.max(1, Math.round((em.interval || 0.4) * 60));
+        const destructible = em.destructible !== false;
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (count > 1 ? (i / (count - 1) - 0.5) * (em.spread || 0.5) : 0);
-          this._add(ox, oy, a, speed, em, {
-            destructible: true,
-            hp: em.hp || 5,
+          const extra = {
+            destructible,
+            hp: destructible ? (em.hp || 5) : 0,
             r: em.r || 12,
             shape: em.shape || 'petal',
             spawnEvery: intervalFrames,
-            spawnEmits: [Object.assign({ interval: 0 }, shoot)],
+            spawnEmits: shoot.map(s => Object.assign({ interval: 0 }, s)),
             deathBurst: em.deathBurst || null,
-          });
+          };
+          if (em.orbitRadius !== undefined) {
+            Object.assign(extra, {
+              type: 'curve',
+              cx: ox, cy: oy,
+              sa: a,
+              sr: em.orbitRadius,
+              curve: em.orbitSpeed || 0.02,
+              cspeed: 0,
+              trackBoss: true,
+              // The orbit circle is centered on the (on-screen) boss, so it
+              // always intersects the playfield — the doll re-enters after
+              // passing over the top. Never cull it off-screen.
+              minLife: 1e7,
+            });
+          }
+          this._add(ox, oy, a, speed, em, extra);
         }
         break;
       }
@@ -1296,6 +1348,10 @@ class DanmakuEngine {
       // (shootable drifting hazards) work from plain edge/column/wall emits.
       'trail', 'spawnEvery', 'spawnEmits', 'spawnCount', 'inheritVel',
       'deathBurst', 'destructible', 'hp', 'maxHp',
+      // Staged motion script (fly/hold/aim/tangent/homing/spin/gravity):
+      // lets ANY emitter — dolls, spawned hazards — drive a per-bullet
+      // trajectory (e.g. a doll that flies out then orbits its spawn point).
+      'script',
     ]) {
       if (em[k] !== undefined) phys[k] = em[k];
     }
@@ -1470,6 +1526,7 @@ class DanmakuEngine {
       // Expanding spiral: the bearing turns by `curve` rad/frame while the
       // radius from the spawn point grows by `cspeed` px/frame. (Rotating
       // the velocity alone would just orbit the boss in a circle.)
+      if (b.trackBoss) { b.cx = this.boss.x; b.cy = this.boss.y; }
       b.sa += b.curve;
       b.sr += b.cspeed;
       const nx = b.cx + Math.cos(b.sa) * b.sr;

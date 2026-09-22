@@ -78,9 +78,9 @@ spell **names** against `refs/stages/spell_card_descriptions.md` (§6).
 | --- | --- | --- |
 | `ecldata1` | S1 | **Rumia** (done) |
 | `ecldata2` | S2 | **Cirno** |
-| `ecldata3` | S3 | **Urumi** (not Nitori) |
+| `ecldata3` | S3 | **Hong Meiling** |
 | `ecldata4` | S4 | Patchouli |
-| `ecldata5` | S5 | Alice |
+| `ecldata5` | S5 | **Sakuya Izayoi** |
 | `ecldata6` | S6 | Remilia |
 | `ecldata7` | **Extra stage** (mislabeled "S7") | **Patchouli, Flandre** |
 
@@ -98,11 +98,17 @@ spell **names** against `refs/stages/spell_card_descriptions.md` (§6).
 > Blossom (TH07). Our game's "Yukari" boss borrows six of these extra-stage
 > cards (three Patchouli, three Flandre); see §14.3.
 
+> ⚠️ **"Urumi" is not a real character.** This doc previously listed "Urumi" as
+> the S3 boss in both the EoSD and MoF tables. The actual bosses are **Hong
+> Meiling** (EoSD S3) and **Hina Kagiyama** (MoF S2). Also, **Alice is not
+> in EoSD** — she is a PCCB character. The EoSD S5 boss is **Sakuya Izayoi**.
+> Always cross-reference the wiki (`refs/stages/`) when uncertain.
+
 ### MoF (Touhou 10) — 11 stages
 | ECL file | Stage | Final boss | Notes |
 | --- | --- | --- | --- |
 | `stage01` | S1 | Cirno | |
-| `stage02` | S2 | Urumi | |
+| `stage02` | S2 | **Hina** (done) | `Boss*` = final; `MBoss*` = midboss (a nagashi-bina doll, separate) |
 | `stage03` | S3 | **Nitori** (done) | `Boss*` = final; `MBoss*` = midboss (separate, earlier fight) |
 | `stage04` | S4 | Suika | |
 | `stage05` | S5 | Marisa | |
@@ -412,6 +418,42 @@ bullets (e.g. a large "parent" bullet that sheds children); `16` = timed release
 curving droplet (turn ≈ ±0.01308997 rad/frame ≈ 0.75°/frame); `32768` = a
 large/hazard bullet. Negative `-999999` args mean "unused/inherit".
 
+### 9.5 Bullet size (sprite index → radius)
+
+The **first arg of every shoot op is a sprite index**, not a size literal. It
+indexes a per-game bullet-sprite table whose pixel size is baked into the
+bullet ANM. In our engine the emit's `r` field (default `4`) is the collision
+AND graze AND draw radius (`engine.js` `_drawBullet` draws `r*1.9` glow /
+`r*0.7` core; collision is `hb + b.r`), so `r` is the single knob that makes a
+bullet "big".
+
+**EoSD (Touhou 6) — verified mapping.** The shoot opcodes (`0x43`–`0x4b`) set
+`bullet_data->sprite = *(uint16*)args[0]` (VM cases in
+`refs/EoSDecomp/src/EnemyController/run_ecl_decompiled.cpp`); `sprite` indexes
+`bullet_types_templates[16]` (`structs.h`). The exact pixel sizes live in
+`etama.anm`, which is **embedded in the exe and not extracted**, so the mapping
+below is **inferred from usage ordering** (sprite 0 = smallest, 9 = largest) and
+documented as such. It is the only way to measure the true sizes.
+
+| sprite | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `r` | 3 | 3.5 | 4 | 4.5 | 5 | 5.5 | 6.5 | 7 | 7.5 | 8 |
+
+Per-card sprite usage is recorded in the `bosses.js` header comments (Remilia
+§14.4, Rumia, Yukari §14.3). Note the EoSD mapping does **not** apply to MoF or
+TH08 — they use different sprite tables.
+
+**MoF (Touhou 10) — best-effort.** `ins_402(slot, sprite, sub)` stores the
+sprite index into the pattern slot (`EnemyEclDispatcher.cpp`
+`ENEMY_ECL_SET_BULLET_SPRITES`); the pixel size is resolved from th10's
+bullet-sprite ANM, which is **not extracted**. Radii are a best-effort match
+(the signature large bullets are bumped, the rest stay small).
+
+**TH08 (Touhou 8) — best-effort.** The shoot op's first operand is a
+`bulletType` index into `BulletManager::bulletTypeSprites[0x20]`
+(`BulletManager.cpp`); `collisionSize` is set from th08's bullet ANM, which is
+**not extracted**. Radii are a best-effort match.
+
 ---
 
 ## 10. Step-by-step process (any game)
@@ -684,6 +726,158 @@ Construct → emitter mapping:
 - Ripples 88-ring → `ring` count 44, `rotStep` 0.02, color-cycled;
   counter-wave → second `ring` with `rot: π/44`, opposite `rotStep`.
 
+Bullet sizes (EoSD sprite → `r`, see §9.5): Kagome Kagome uses sprite 9 (the
+largest) → `r: 8`; Philosopher's Stone uses sprite 5 → `r: 5.5`; Royal Flare
+uses sprites 1/3 → `r: 3.5`/`4.5` (emits set to `r: 4.5`); the non-spell and
+barrage rings use sprite 2 → `r: 4` (left at default). Silent Serena uses
+sprites 1/3 (→ `r: 3.5`/`4.5`, currently left at default `r: 4` — open item).
+
 Verified: `node tests/test-bosses.js` 408/0, `tests/tmp-engine-test2.js` 92/0,
 density probe max 550 (normal) / 632 (lunatic) concurrent bullets
 (Philosopher's Stone peak), determinism PASS (171 bullets compared, 300 frames).
+
+### 14.4 Remilia (EoSD, stage 6, `ecldata6.ecl`)
+
+Remilia is the stage-6 **final** boss. The fight is a **chain of sub-bosses**
+(`Sub17` life 13000 → `Sub19` life 15500 → `Sub23` → …), each sub carrying one
+spell card dispatched by `ins_115`/`ins_116` (timer) + `ins_113`/`ins_114`
+(life) with `!EN`/`!HL` rank gates; the non-spell loop is `Sub18`. The midboss
+is `Sub8` (Sakuya, life 6000) and is **separate** — not folded into Remilia's
+phases (same precedent as Nitori's `MBoss*`). The verified EN/HL slot pairings:
+Sub30↔Sub31, Sub32↔Sub33, Sub34↔Sub35, Sub38↔Sub39, Sub43↔Sub44.
+
+Spell-card banners verified in `ecldata6_utf8.txt` (SHIFT_JIS → UTF-8):
+| Card | ECL sub | Key constructs (decompiled) |
+| --- | --- | --- |
+| — (non-spell loop) | Sub18 | 3-arm rotating fans: aim_mode 1 (`ins_68`) 3/9/6-way, speed 1.8/3.5/2.5, `ins_20` angle step |
+| Heaven's Punishment "Star of David" | Sub30 | 16-bullet red ring (`ins_118` #ff8080) + 6-way/3-way rings + 90-frame aim sweep |
+| Divine Punishment "Young Demon Lord" (H/L) | Sub31 | 16-bullet red ring + 9-way/6-way rotating rings |
+| Nether Sign "Scarlet Netherworld" | Sub32 | 24-way ring (rot 0.0245) + 16-way ring (rot 0.02), counter-rotating |
+| Scarlet Sign "Scarlet Shoot" | Sub38 (→ Sub36) | fast aimed streams: 9-way @ 6.0, 6-way @ 4.0, 5-way @ 3.0 |
+| "Scarlet Gensokyo" (L finale) | Sub44 | rotating rings (10/12/17/12 bullets) with drift |
+
+(Other banners present but not used as phases: Mountain of a Thousand Needles
+`Sub33`, Curse of Vlad Dracula `Sub34`, Vampire Fantasy `Sub35`, Scarlet
+Meister `Sub39`, Red Magic `Sub38`-adjacent `Sub43`.)
+
+EoSD shoot ops → our emitters: aim_mode 1 (`ins_68`) → `aimed`/`fan` with
+`angleStep` (rotating fans); aim_mode 3 (`ins_70`) → `ring`; `ins_118` sets the
+bullet color (Remilia's cards are red `#ff8080`). EoSD speeds are px/frame.
+
+Emitted (`bosses.js`, the `remilia:` block + `REMILIA_*` arrays):
+Normal-authored, Lunatic scaled by `scalePhase`. Phases (Star of David / Young
+Demon Lord are the same slot, different rank, so they never share a move-set):
+- **Normal** (4): Non-spell (hp110) → Star of David (hp130) → Scarlet
+  Netherworld (hp140) → Scarlet Shoot (hp150).
+- **Lunatic** (4): Non-spell (hp120) → Young Demon Lord (hp140) → Scarlet
+  Netherworld (hp155) → Scarlet Gensokyo (hp165).
+
+Construct → emitter mapping:
+- Non-spell 3-arm fans → three `aimed` streams (count 3/9/7), `angleStep`
+  0.628/0.393/0.157, looping.
+- Star of David → two counter-rotating 3-bullet `ring`s (rotSpeed ±0.03,
+  `rot` π/3 offset) + a 12-bullet hexagon `ring` (blue) + slow aimed 3-way fan.
+- Young Demon Lord → 12-bullet `ring` (rotSpeed 0.196) + 6-bullet `ring`
+  (rotSpeed 0.098) + aimed 5-way fan.
+- Scarlet Netherworld → two 24-bullet `ring`s (rotSpeed ±0.0245) + two 16-bullet
+  `ring`s (rotSpeed ±0.02), counter-rotating.
+- Scarlet Shoot → three looping `aimed` streams (count 9/7/5), `angleStep`
+  ±0.1, sweeping across the screen.
+- Scarlet Gensokyo → four `ring`s (count 10/12/17/12), rotSpeed ±0.02–0.0245.
+
+Bullet sizes (EoSD sprite → `r`, see §9.5): Remilia's cards use sprites 1–9 —
+the largest of the EoSD ports — so her bullets are genuinely bigger than
+Rumia's (sprites 0–3). Per-card sprite usage (from the ECL shoot ops) is
+recorded in the `remilia:` header comment in `bosses.js`; e.g. the Non-spell
+3-arm fans are sprite 3/9/6 → `r: 4.5`/`8`/`6.5`, Star of David is all
+sprite 6 → `r: 6.5`, the Netherworld 24-rings are sprite 2 → `r: 4` (small
+dense-ring sprite, deliberate).
+
+Verified: `tests/tmp-engine-test2.js` regression (all 9 bosses x 2 difficulties)
+passes with no new failures; density probe max 293 (normal) / 332 (lunatic)
+concurrent bullets (calibrated against the Rumia + Nitori ports); determinism
+(mirror + desync) PASS.
+
+### 14.5 Hina (MoF, stage 2, `stage02.ecl`)
+
+Hina Kagiyama is the stage-2 **final** boss (the EoSD S2 boss is Cirno — an
+earlier draft of this doc mislabeled the MoF S2 final boss as "Wriggle
+Nightbug"; corrected). The fight flow (verified in `mof_extract/disasm/
+stage02.txt`, `thecl -d 10 -j`): `Boss` (life 9000) → `Boss1` (non-spell,
+2700f) → `BossCard1` → `Boss2` (non-spell, 5400f) → `BossCard2` → `BossCard3`
+→ `BossDead`. The `MBoss*` subs are a **separate midboss** (a nagashi-bina
+doll with its own "Bad Fortune" / "Biorhythm of the Misfortune God" card) —
+not folded into the final fight (same precedent as Nitori's `MBoss*`).
+
+Spell-card banners verified in the disasm (§6):
+| Card | ECL sub | E/N | H/L |
+| --- | --- | --- | --- |
+| 1 | `BossCard1` | 疵符「ブロークンアミュレット」 Broken Amulet | 疵痕「壊されたお守り」 Broken Charm of Protection |
+| 2 | `BossCard2` | 悪霊「ミスフォーチュンズホイール」 Misfortune's Wheel | 悲運「大鐘婆の火」 Old Lady Ohgane's Fire |
+| 3 | `BossCard3` | 創符「ペインフロー」 Pain Flow | 創符「流刑人形」 Exiled Doll |
+
+Pattern mining (pattern-slot opcodes, §9.4):
+- **Non-spell** (`Boss1` + `Boss1At`): two `ins_256` side-shooters (`BossAtEnemy`)
+  spawned at screen angles 0 and π, each a player-aimed stream (aim mode 3,
+  speed 2.2 on N-rank) tracking the player; plus a 32-shot aimed burst (aim
+  mode 3, count 32, speed 2.0) fired five times in a row, then a rest, looping.
+- **Card 1 — Broken Amulet** (`BossCard1` + `Boss1CardAtEnemy`/`_At`): six to
+  ten side-shooters (E/N/H/L = 6/8/10/14) spawned around the player-aim angle,
+  stepping 60°/45°/36°/30° apart; each fires a 5-way player-aimed fan (aim
+  mode 3, count 5, speed 1.0, sprite 5) and, on every fifth shot, transforms the
+  bullet into a 4-way cross (±90°/±270°, `ins_409` flag 64) — the "broken
+  amulet" shards.
+- **Card 2 — Misfortune's Wheel** (`BossCard2` + `Boss2CardAtEnemy`/`_At`):
+  two counter-rotating waves of six to eight orbiting side-shooters (angle
+  step ±0.017453 rad/frame, orbit radius 32px), each firing a slow curving
+  bullet (aim mode 1, speed peels 0.0→0.3, `ins_409` flag 8 curve 0.01–0.013
+  rad/frame, sprite 5 EN / sprite 25 HL) — the "wheel" of curving bullets;
+  plus a central 8-way ring hub (`BossCard2At`, aim mode 2, count 8, speed 2.2,
+  sprite 12).
+- **Card 3 — Pain Flow** (`BossCard3` + `BossAtEnemy3`): four cardinal
+  side-shooters (`ins_256` at screen angles 0, π/2, π, −π/2) each rotating at
+  0.02618 rad/frame; the main barrage is a 3–9-way fan (aim mode 1, E/N/H/L
+  count 3/5/5/9, speed 1.0/1.5/1.5/2.0, sprite 5) whose angle sweeps −0.1309
+  rad/frame and is **offset onto the player** (`ins_403` SET_OFFSET to the
+  aim point from `ins_81`) — a fast-rotating fan that always centers on you.
+
+MoF pattern slots map to our emitters (all existing, no new engine code):
+- Non-spell side-shooters → `gap` at xn 0.34/0.66 with `inner:'aimed'` (odd
+  counts 3/5 so one bullet sits on the aim line); 32-shot burst → `aimed`
+  count 32 with `repeat: 5, period: 3.5`.
+- Broken Amulet shards → eight `gap` side-shooters on a wide ring around the
+  boss (`DOLL_R` 0.18, so the shards rain in from across the top rather than
+  clumping on one point), each `inner:'aimed'` count 5, spread 0.55 rad, slow
+  speed 1.0 — the 4-way cross transform is approximated by the wide 5-way aimed
+  fan.
+- Misfortune's Wheel → two counter-rotating `spin` rings (count 16, speed 1.2,
+  `spin` ±0.35, interval 1.0, interleaved by a half-step, the large hazard
+  bullets bumped to `r: 6`) + a slow 3-way aimed hub. The walls are tight
+  enough that standing still isn't an option but leave room to breathe for a
+  Normal card (Lunatic scales them up via `scalePhase`).
+- Pain Flow → two fast/counter-rotating 5-way `fan`s (`angleStep` ±0.08/±0.05)
+  + four cardinal `gap` side-shooters.
+
+Bullet sizes (MoF sprite → `r`, best-effort): the Wheel's large hazard bullets
+are sprite 12/25 → `r: 6`; the side-shooter barrage (sprite 12) → `r: 4`; the
+Pain Flow rotating fan (sprite 5) → `r: 4`; non-spell streams (sprite 5/6) →
+`r: 4`. MoF resolves each bullet from an `ins_402` sprite index into the
+bullet-sprite ANM table (th10's bullet ANM, not extracted), so exact pixel
+sizes can't be read from the disasm.
+
+Emitted (`bosses.js`, the `hina:` block + top-level `HINA_*` arrays):
+Normal-authored, Lunatic scaled by `scalePhase`. Phases (the three cards have
+distinct E/N vs H/L banner names, so Lunatic takes the H/L names):
+- **Normal** (4): Misfortune (non-spell, hp110) → Broken Amulet (hp130) →
+  Misfortune's Wheel (hp140) → Pain Flow (hp150).
+- **Lunatic** (4): same constructs with the H/L names — Broken Charm of
+  Protection (hp140) / Old Lady Ohgane's Fire (hp150) / Exiled Doll (hp160).
+
+Verified headlessly: `tests/tmp-engine-test2.js` regression (all 9 bosses x 2
+difficulties) passes with no new failures (the 8 beam/laser failures are
+pre-existing on clean code); density probe max 764 (normal) / 898 (lunatic)
+concurrent bullets (Broken Amulet peak — under the ~1200 cap, in line with the
+Nitori/Remilia ports); Misfortune's Wheel peaks 309 (normal) / 358 (lunatic);
+determinism PASS (two identical fights produce identical
+bullet fields, 900 frames, both difficulties); `tests/test-art.js` 5/0 and
+`tests/test-board.js` 41/0.

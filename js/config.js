@@ -19,7 +19,7 @@ const CONFIG = {
     q: { you: ['marisa'], ai: ['yukari'] },
     r: { you: ['sakuya', 'youmu'], ai: ['remilia', 'yuyuko'] },
     b: { you: ['sanae', 'reisen'], ai: ['patchouli', 'alice'] },
-    n: { you: ['aya', 'hatate'], ai: ['nitori', 'momiji'] },
+    n: { you: ['aya', 'hatate'], ai: ['nitori', 'hina'] },
     p: { you: ['cirno'], ai: ['rumia'] },
   },
 
@@ -41,7 +41,7 @@ const CONFIG = {
     patchouli: 'Patchouli Knowledge',
     alice: 'Alice Margatroid',
     nitori: 'Nitori Kawashiro',
-    momiji: 'Momiji Inubashiri',
+    hina: 'Hina Kagiyama',
     rumia: 'Rumia',
   },
 
@@ -141,10 +141,10 @@ const CONFIG = {
     // Rumia's EoSD-faithful cards are compressed to the ~25s house window
     // (3 cards Normal / 4 Lunatic => ~75-100s of bullet exposure), but her
     // patterns are the densest in the game — seeded slightly below
-    // Nitori/Momiji, who have similar total exposure with simpler patterns.
+    // Nitori/Hina, who have similar total exposure with simpler patterns.
     rumia: { normal: 0.60, lunatic: 0.18 },
     nitori: { normal: 0.65, lunatic: 0.22 },
-    momiji: { normal: 0.65, lunatic: 0.22 },
+    hina: { normal: 0.65, lunatic: 0.22 },
     patchouli: { normal: 0.60, lunatic: 0.20 },
     alice: { normal: 0.60, lunatic: 0.20 },
     remilia: { normal: 0.45, lunatic: 0.15 },

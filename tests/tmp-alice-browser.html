@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Alice Browser Smoke</title></head>
+<body style="margin:0;background:#000">
+<canvas id="c" width="480" height="640"></canvas>
+<div id="status" style="position:fixed;top:0;left:0;right:0;background:rgba(0,0,0,.75);color:#0f0;font:12px monospace;z-index:999;white-space:pre;padding:6px"></div>
+<script src="../js/config.js"></script>
+<script src="../js/danmaku/engine.js"></script>
+<script src="../js/danmaku/bosses.js"></script>
+<script>
+(function () {
+  const statusEl = document.getElementById('status');
+  const errors = [];
+  window.addEventListener('error', (e) => errors.push(e.message));
+  function report() {
+    statusEl.textContent =
+      'frame=' + frame + '  phase=' + phaseIdx + ' "' + phaseName + '"' +
+      '  bullets=' + bulletCount + '  orbitingDolls=' + dollCount +
+      '  result=' + resultStr +
+      '\nseen: ' + seen.join(' -> ') +
+      (errors.length ? '\nERRORS: ' + errors.join(' | ') : '\n(no runtime errors)');
+  }
+
+  const canvas = document.getElementById('c');
+  const e = new DanmakuEngine(canvas, {});
+  const boss = { ...BOSSES.alice, charId: 'alice' };
+  // A real Alice fight: auto-fire on (the boss takes damage so the cards
+  // advance), unkillable player (the fight runs to the doll cards instead of
+  // dying). This is what a player actually sees.
+  e.start(getPhases('alice', 'normal'), boss, CONFIG.DANMAKU_STATS.p, 'p', 'alice');
+  e.player.lives = 999; e.player.bombs = 99;
+
+  const seen = [];
+  let lastPhase = -1, frame = 0, phaseIdx = 0, phaseName = '', bulletCount = 0, dollCount = 0, resultStr = 'null';
+  let frenchStart = 0;
+  // Drive the fight synchronously (deterministic; no rAF dependency) until we
+  // are 2s into the French Dolls card (the orbiting-doll card), or the fight
+  // ends, or a hard frame cap is hit.
+  for (let i = 0; i < 6000 && !e.result; i++) {
+    e.update();
+    frame++;
+    phaseIdx = e.phaseIndex;
+    phaseName = e.phases[phaseIdx].name;
+    bulletCount = e.bullets.length;
+    dollCount = e.bullets.filter(b => b.type === 'curve' && b.trackBoss).length;
+    if (phaseIdx !== lastPhase) { lastPhase = phaseIdx; seen.push(phaseName); }
+    if (phaseName === 'Soufu "French Dolls"' && frenchStart === 0) frenchStart = frame;
+    // Stop 2s (120 frames) into the French Dolls card to capture it.
+    if (frenchStart && frame - frenchStart === 120) break;
+  }
+  resultStr = String(e.result);
+  e.render(); // draw the final state to the REAL canvas
+  report();
+})();
+</script>
+</body>
+</html>

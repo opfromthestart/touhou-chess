@@ -53,14 +53,64 @@ if (typeof CONFIG === 'undefined' && typeof module !== 'undefined' && module.exp
   global.CONFIG = require('../config.js').CONFIG;
 }
 
-// Apply Lunatic scaling to a phase's emits.
-function scalePhase(phase, diff) {
-  const d = CONFIG.DIFFICULTY[diff];
-  const emits = phase.emits.map(em => ({
-    ...em,
-    speedMul: (em.speedMul !== undefined ? em.speedMul : 1) * d.speed,
-    densityMul: (em.densityMul || 1) * d.density,
-  }));
+// Apply Lunatic scaling to a phase's emits. A boss may override the global
+// Lunatic multipliers with its own `lunaticScale` (e.g. Alice's Lunatic cards
+// are tuned harder than the default 1.2x / 1.35x). The override is merged over
+// the global so any field it omits (e.g. homing) falls back to the default.
+//
+// When a boss overrides the scale, its DOLL sub-emitters are densified too.
+// The global scale only touches top-level emits, but Alice's spell cards put
+// their bullets in the doll's nested `shoot` — so without this, the doll cards
+// (French/Dutch/Bunraku) barely changed on Lunatic and felt too easy. Density
+// is the difficulty lever (more bullets at once); the nested speed defaults to
+// 1.0 (same as Normal) because faster bullets are easier to dodge. A top-level
+// emit with `noLunaticScale: true` (Bunraku) is skipped — it's tuned by its own
+// shoot-budget cap instead of by density.
+function scalePhase(phase, diff, boss) {
+  const global = CONFIG.DIFFICULTY[diff];
+  const override = (boss && boss.lunaticScale && diff === 'lunatic')
+    ? boss.lunaticScale : null;
+  const d = override ? { ...global, ...override } : global;
+  // Nested-pattern (doll bullet) multipliers.
+  const nDensity = override
+    ? (override.nestedDensity !== undefined ? override.nestedDensity : d.density)
+    : d.density;
+  const nSpeed = override
+    ? (override.nestedSpeed !== undefined ? override.nestedSpeed : 1)
+    : d.speed;
+  // Scale a bullet pattern's count (density) and speed. A spawnBullet's own
+  // count is the number of parent hazards, not the bullet field — leave it and
+  // scale only what it spawns (the French arrowhead stays 1, its split densifies).
+  const scalePattern = (pat) => {
+    if (!pat || typeof pat !== 'object') return pat;
+    const out = { ...pat };
+    if (pat.type !== 'spawnBullet' && pat.count !== undefined) {
+      out.count = Math.max(1, Math.round(pat.count * nDensity));
+    }
+    if (pat.speed !== undefined) out.speed = pat.speed * nSpeed;
+    if (Array.isArray(pat.spawnEmits)) out.spawnEmits = pat.spawnEmits.map(scalePattern);
+    return out;
+  };
+  // Scale a doll's shoot pattern (the bullets it fires), leaving the doll emit
+  // itself (count 1) untouched.
+  const scaleDollShoot = (doll) => {
+    if (!doll || doll.type !== 'doll' || !doll.shoot) return doll;
+    return { ...doll, shoot: scalePattern(doll.shoot) };
+  };
+  const scaleEmit = (em) => {
+    const out = {
+      ...em,
+      speedMul: (em.speedMul !== undefined ? em.speedMul : 1) * d.speed,
+      densityMul: (em.densityMul || 1) * d.density,
+    };
+    if (override && !em.noLunaticScale) {
+      if (em.type === 'doll') return scaleDollShoot(out);
+      // A bubble whose spawnEmits are dolls (Bunraku) — scale each doll's shoot.
+      if (Array.isArray(out.spawnEmits)) out.spawnEmits = out.spawnEmits.map(scaleDollShoot);
+    }
+    return out;
+  };
+  const emits = phase.emits.map(scaleEmit);
   return { ...phase, emits };
 }
 
@@ -69,7 +119,7 @@ function getPhases(bossId, difficulty) {
   const boss = BOSSES[bossId];
   if (!boss) return [];
   const base = boss.phases[difficulty === 'lunatic' ? 'lunatic' : 'normal'];
-  return base.map(p => scalePhase(p, difficulty));
+  return base.map(p => scalePhase(p, difficulty, boss));
 }
 
 // ── Shared Rumia patterns ─────────────────────────────────────────────────
@@ -146,23 +196,23 @@ const RUMIA_NONSPELL = [
   {
     t: 1.0, type: 'fan', count: 7, spread: 0.6283, speed: 1.4,
     angleOffset: -0.3, angleStep: 0.02, interval: 0.5, repeat: 12, period: 12,
-    color: '#c8b8ff', coreColor: '#ece8ff', shape: 'circle', r: 4
+    color: '#c8b8ff', coreColor: '#ece8ff', shape: 'circle', r: 3.5
   },
   {
     t: 7.0, type: 'fan', count: 7, spread: 0.6283, speed: 1.4,
     angleOffset: 0.3, angleStep: -0.02, interval: 0.5, repeat: 12, period: 12,
-    color: '#c8b8ff', coreColor: '#ece8ff', shape: 'circle', r: 4
+    color: '#c8b8ff', coreColor: '#ece8ff', shape: 'circle', r: 3.5
   },
   // Sub3: narrow 5-bullet 15° fans, counter-sweeping on their own cycle.
   {
     t: 0.7, type: 'fan', count: 5, spread: 0.2618, speed: 1.4,
     angleOffset: -0.5, angleStep: 0.03, interval: 0.3, repeat: 14, period: 8.4,
-    color: '#e0e4ff', coreColor: '#ffffff', shape: 'circle', r: 3
+    color: '#e0e4ff', coreColor: '#ffffff', shape: 'circle', r: 3.5
   },
   {
     t: 4.9, type: 'fan', count: 5, spread: 0.2618, speed: 1.4,
     angleOffset: 0.5, angleStep: -0.03, interval: 0.3, repeat: 14, period: 8.4,
-    color: '#e0e4ff', coreColor: '#ffffff', shape: 'circle', r: 3
+    color: '#e0e4ff', coreColor: '#ffffff', shape: 'circle', r: 3.5
   },
 ];
 
@@ -179,7 +229,7 @@ const RUMIA_MOONLIGHT = [
     t: 0.5, type: 'fanVolley', count: 42, spread: Math.PI, center: true, rows: 1,
     speed: 2.5,
     interval: 0.667, repeat: -1,
-    color: '#fff8d0', coreColor: '#ffffff', shape: 'circle', r: 4
+    color: '#fff8d0', coreColor: '#ffffff', shape: 'circle', r: 4.5
   },
 ];
 
@@ -258,7 +308,7 @@ const RUMIA_DEMARCATION = [
   {
     t: 1.2, type: 'fanVolley', count: 10, center: true, spread: 0.504, rows: 8,
     speed: 3.0, speed2: 1.0,
-    colors: DEMARCATION_COLORS, shape: 'rice', r: 4, repeat: 1, period: 20
+    colors: DEMARCATION_COLORS, shape: 'rice', r: 3.5, repeat: 1, period: 20
   },
   // Sub18: thin laser wall through the boss (ins_86, width 16) — six
   // segments 8 frames apart. Aims at the player and stretches to the screen
@@ -290,17 +340,17 @@ const RUMIA_DEMARCATION = [
   {
     t: 9.7, type: 'fanVolley', count: 13, center: true, spread: Math.PI, rows: 8,
     speed: 3.0, speed2: 1.0,
-    colors: DEMARCATION_COLORS, shape: 'circle', r: 10, repeat: 1, period: 20
+    colors: DEMARCATION_COLORS, shape: 'circle', r: 4, repeat: 1, period: 20
   },
   {
     t: 10.4, type: 'fanVolley', count: 13, center: true, spread: Math.PI, rows: 9,
     speed: 3.0, speed2: 1.0,
-    colors: DEMARCATION_COLORS, shape: 'circle', r: 10, repeat: 1, period: 20
+    colors: DEMARCATION_COLORS, shape: 'circle', r: 4, repeat: 1, period: 20
   },
   {
     t: 11.1, type: 'fanVolley', count: 13, center: true, spread: Math.PI, rows: 10,
     speed: 3.0, speed2: 1.0,
-    colors: DEMARCATION_COLORS, shape: 'circle', r: 10, repeat: 1, period: 20
+    colors: DEMARCATION_COLORS, shape: 'circle', r: 4, repeat: 1, period: 20
   },
   // Sub21: mirrored escalating streams — 10-bullet 73.8° fans, 2 rows
   // (second row half speed), +0.25 speed per shot, base ∓40.8° stepping
@@ -309,14 +359,14 @@ const RUMIA_DEMARCATION = [
     t: 14.4, type: 'fanVolley', count: 10, center: true, spread: 0.738, rows: 2,
     speed: 1.0, speed2: 0.3, speedStep: 0.25,
     angleOffset: -0.714, angleStep: 0.1428,
-    colors: DEMARCATION_COLORS, shape: 'circle', r: 4,
+    colors: DEMARCATION_COLORS, shape: 'circle', r: 3.5,
     interval: 0.1667, repeat: 16, period: 20
   },
   {
     t: 17.1, type: 'fanVolley', count: 10, center: true, spread: 0.738, rows: 2,
     speed: 1.0, speed2: 0.3, speedStep: 0.25,
     angleOffset: 0.714, angleStep: -0.1428,
-    colors: DEMARCATION_COLORS, shape: 'circle', r: 4,
+    colors: DEMARCATION_COLORS, shape: 'circle', r: 3.5,
     interval: 0.1667, repeat: 16, period: 20
   },
 ];
@@ -338,6 +388,12 @@ const RUMIA_DEMARCATION = [
 // aimed/fan/fanVolley; aim mode 1 (fixed screen angle) -> absolute `angle`;
 // aim mode 0 (symmetric) -> fan/ring; ins_409 flag 8192 curving droplets ->
 // `curve`; ins_412 short laser volleys -> fast fans.
+// Bullet SIZE: MoF resolves each pattern's bullet from an ins_402 sprite
+// index into the bullet-sprite ANM table (th10's bullet ANM, NOT extracted),
+// so exact pixel sizes can't be read from the disasm — the radii below are a
+// best-effort match. The Cucumber's rolling barrage (the card's signature
+// large bullet) is r5; the streams/needles/droplets are small (r3-4) as in
+// the original.
 const NITORI_NONSPELL = [
   // Three slow streams splaying downward (Boss2_at: three mode-1 single-shot
   // streams, per-rank speed E/N/H/L = 2.0/2.5/3.5/3.5 -> Normal 2.5), each
@@ -445,7 +501,7 @@ const NITORI_CUCUMBER = [
     t: 0.5, type: 'fanVolley', count: 32, rows: 2, spread: 0.19635, center: true,
     speed: 2.5, speed2: 1.0,
     interval: 2.0, repeat: -1,
-    color: '#88ffcc', coreColor: '#eafff5', shape: 'circle', r: 4
+    color: '#88ffcc', coreColor: '#eafff5', shape: 'circle', r: 5
   },
   // Counter-rotating 9-ray laser fans (BossCard3_at: ins_412 short laser
   // volleys, 9 rays, EN speed 2.8, rotating 180° CCW over 16 shots then
@@ -494,6 +550,952 @@ const NITORI_SPIN_PLATE = [
     interval: 0.5, repeat: -1,
     color: '#9fe8ff', coreColor: '#ffffff', shape: 'circle', r: 3
   },
+];
+
+// ── Hina Kagiyama — Knight (value 3). Misfortune-doll (nagashi-bina) themes. ──
+// Pattern mechanics mined from the REAL MoF (Touhou 10) stage-2 ECL script
+// (mof_extract/disasm/stage02.txt, `thecl -d 10 -j`), decoded against the
+// Th10 RE (refs/th10/src/EnemyEclDispatcher.cpp pattern-slot opcodes
+// ins_400–421, refs/th10/src/EclVm.cpp) and thecl10.c. Card list verified
+// against the spell banners in the disasm (see docs/porting-eosd-spells.md
+// §6 + §14.5): final boss `Boss` -> `Boss1` (non-spell) -> `BossCard1` ->
+// `Boss2` (non-spell) -> `BossCard2` -> `BossCard3` -> `BossDead`. The
+// `MBoss*` subs are a SEPARATE midboss (a nagashi-bina doll with its own
+// "Bad Fortune" card) — not part of the final fight.
+//   Normal:  Non-spell, Broken Amulet, Misfortune's Wheel, Pain Flow
+//   Lunatic: Non-spell, Broken Charm of Protection, Old Lady Ohgane's Fire,
+//            Exiled Doll
+//            (the H/L banner names; the patterns are the same constructs,
+//            scaled up by the engine's Lunatic multipliers).
+// MoF pattern slots map to our emitters: aim mode 3 (player-aimed) ->
+// aimed/fan; aim mode 1 (fixed screen angle) -> absolute `angle`; the
+// side-shooter `ins_256` spawns (BossAtEnemy* / Boss1CardAtEnemy) -> `gap`
+// emitters placed around the boss; ins_409 flag 32768 large hazard bullets
+// -> big `r`.
+// Bullet SIZE: MoF resolves each pattern's bullet from an ins_402 sprite
+// index into the bullet-sprite ANM table (th10's bullet ANM, NOT extracted),
+// so exact pixel sizes can't be read from the disasm — the radii below are a
+// best-effort match (the Wheel's large hazard bullets are bumped to r6).
+const HINA_NONSPELL = [
+  // Two side-shooters (Boss1 spawns BossAtEnemy at angle 0 and π): player-
+  // aimed streams tracking the player, one from each side of the doll. The
+  // real pattern uses a 2-way and a 6-way stream; here 3 and 5 (odd, so one
+  // bullet sits dead on the aim line).
+  {
+    t: 0, type: 'gap', xn: 0.34, yn: 0.16,
+    inner: 'aimed', count: 3, spread: 0.35, speed: 1.8,
+    interval: 0.14, repeat: -1,
+    color: '#ff8899', coreColor: '#ffd8de', shape: 'circle', r: 4
+  },
+  {
+    t: 0.2, type: 'gap', xn: 0.66, yn: 0.16,
+    inner: 'aimed', count: 5, spread: 0.5, speed: 1.8,
+    interval: 0.18, repeat: -1,
+    color: '#ff8899', coreColor: '#ffd8de', shape: 'circle', r: 4
+  },
+  // 32-shot aimed burst (Boss1: aim mode 3, count 32, speed 2.0) — five dense
+  // aimed fans in a row (a thick wall dead on the player), then a rest,
+  // looping.
+  {
+    t: 0.6, type: 'aimed', count: 32, spread: 0.18, speed: 2.0,
+    interval: 0.16, repeat: 5, period: 3.5,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'diamond', r: 5
+  },
+];
+
+// Broken Amulet (疵符「ブロークンアミュレット」, MoF S2 spell #1, E/N): a
+// ring of eight side-shooters (BossCard1: ins_256 "Boss1CardAtEnemy" x8,
+// 45° apart on N-rank) around the boss, each firing a slow 5-way player-aimed
+// fan (Boss1CardAtEnemyAt: aim mode 3, count 5, speed 1.0) — the broken
+// amulet's shards raining in from all sides.
+const HINA_BROKEN_AMULET = [];
+{
+  const DOLL_R = 0.18; // normalized radius of the side-shooter ring (wide arc,
+  // so the shards rain in from across the top of the screen, not a tight
+  // cluster around the boss)
+  const bx = 0.5, by = 0.14; // boss position (normalized)
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const xn = bx + Math.cos(a) * DOLL_R;
+    const yn = Math.min(0.85, Math.max(0.02, by + Math.sin(a) * DOLL_R));
+    HINA_BROKEN_AMULET.push({
+      t: i * 0.12, type: 'gap', xn, yn,
+      // Wide 5-way fan (0.55 rad ≈ 31°) so each shooter's shards cover a
+      // broad arc instead of converging on one point; the real card's slow
+      // speed (1.0) lets the shards drift across the playfield.
+      inner: 'aimed', count: 5, spread: 0.55, speed: 1.0,
+      interval: 0.5, repeat: -1,
+      color: '#ff99aa', coreColor: '#ffe0e5', shape: 'circle', r: 4
+    });
+  }
+}
+
+// Misfortune's Wheel (悪霊「ミスフォーチュンズホイール」, MoF S2 spell #2,
+// E/N): two counter-rotating rings of large curving bullets (BossCard2: two
+// alternating waves of side-shooters orbiting the aim point, each a slow
+// curving large bullet — ins_409 flag 32768, turn ~0.013 rad/frame — one wave
+// +1°/shot, the other -1°/shot). Approximated with two counter-rotating
+// `spin` rings of large bullets. Each ring is a continuous wall (16 bullets,
+// 22.5° apart; the two walls interleave by a half-step → ~110px gaps at the
+// player's distance) — tight enough that standing still is not an option
+// (the walls sweep around you), but with room to breathe for a Normal card.
+// The slow aimed hub keeps gentle center pressure.
+const HINA_WHEEL = [
+  // Wheel 1: 16 large bullets spiraling out clockwise around the boss.
+  {
+    t: 0, type: 'ring', count: 16, speed: 1.2, spin: 0.35,
+    interval: 1.0,
+    color: '#ffcc44', coreColor: '#fff0d0', shape: 'circle', r: 6
+  },
+  // Wheel 2: same wall spiraling counter-clockwise (offset half a step, 11.25°,
+  // so the two walls interleave instead of overlapping).
+  {
+    t: 0.5, type: 'ring', count: 16, speed: 1.2, spin: -0.35, rot: 0.1963,
+    interval: 1.0,
+    color: '#ff8844', coreColor: '#ffe0c0', shape: 'diamond', r: 6
+  },
+  // Aimed hub: a 3-way fan dead on the player at the wheel's center —
+  // gentle aimed pressure that nudges you to reposition between the walls.
+  {
+    t: 0.5, type: 'aimed', count: 3, spread: 0.3, speed: 1.6,
+    interval: 0.7,
+    color: '#ffaa55', coreColor: '#fff0d0', shape: 'circle', r: 4
+  },
+];
+
+// Pain Flow (創符「ペインフロー」, MoF S2 spell #3, E/N): a fast-rotating
+// 5-way fan (BossCard3 main loop: aim mode 1, count 5, spread 22.5°, speed
+// 1.5, angle -7.5°/fire) plus four side-shooters at the cardinal directions
+// (BossAtEnemy3 at 0/90/180/-90) — a flowing, layered barrage.
+const HINA_PAIN_FLOW = [
+  // Fast-rotating 5-way fan (the card's signature flowing spiral).
+  {
+    t: 0, type: 'fan', count: 5, spread: 0.3927, speed: 1.5,
+    angle: Math.PI / 2, angleStep: -0.08,
+    interval: 0.1, repeat: -1,
+    color: '#cc66ff', coreColor: '#e8d0ff', shape: 'circle', r: 4
+  },
+  // A slower counter-rotating 5-way fan (the card's layered flow).
+  {
+    t: 0.3, type: 'fan', count: 5, spread: 0.3927, speed: 1.3,
+    angle: Math.PI / 2, angleStep: 0.05,
+    interval: 0.14, repeat: -1,
+    color: '#aa88ff', coreColor: '#e0d0ff', shape: 'diamond', r: 4
+  },
+  // Four side-shooters at the cardinal directions (slow aimed streams).
+  { t: 0.5, type: 'gap', xn: 0.62, yn: 0.14, inner: 'aimed', count: 1, speed: 1.4, interval: 1 / 6, repeat: -1, color: '#bb99ff', coreColor: '#e8d8ff', shape: 'circle', r: 3 },
+  { t: 0.7, type: 'gap', xn: 0.38, yn: 0.14, inner: 'aimed', count: 1, speed: 1.4, interval: 1 / 6, repeat: -1, color: '#bb99ff', coreColor: '#e8d8ff', shape: 'circle', r: 3 },
+  { t: 0.9, type: 'gap', xn: 0.5, yn: 0.26, inner: 'aimed', count: 1, speed: 1.4, interval: 1 / 6, repeat: -1, color: '#bb99ff', coreColor: '#e8d8ff', shape: 'circle', r: 3 },
+  { t: 1.1, type: 'gap', xn: 0.5, yn: 0.04, inner: 'aimed', count: 1, speed: 1.4, interval: 1 / 6, repeat: -1, color: '#bb99ff', coreColor: '#e8d8ff', shape: 'circle', r: 3 },
+];
+
+// ── Remilia — Rook (value 5). Vampire final-boss pressure. ──
+// Pattern mechanics mined from the REAL EoSD (Touhou 6) stage-6 ECL script
+// (eosd_extract/ecl/disasm/ecldata6_utf8.txt), decoded against the decompiled
+// ECL VM + BulletManager (refs/EoSDecomp/src/...). Remilia is the stage-6 FINAL
+// boss (Sub15 -> Sub16 -> Sub17, life 13000); the midboss (Sakuya, Sub8,
+// life 6000) is separate and not folded in. Card banners verified in the
+// disasm (see docs/porting-eosd-spells.md §6 + §14.4):
+//   Non-spell (Sub18), Star of David (Sub30), Young Demon Lord (Sub31,
+//   Hard/Lunatic), Scarlet Netherworld (Sub32), Mountain of a Thousand
+//   Needles (Sub33), Curse of Vlad Dracula (Sub34), Vampire Fantasy (Sub35),
+//   Scarlet Shoot (Sub38), Scarlet Meister (Sub39), Red Magic (Sub43),
+//   Scarlet Gensokyo (Sub44, Lunatic finale).
+// This port uses six of them:
+//   Normal:  Non-spell, Star of David, Scarlet Netherworld, Scarlet Shoot
+//   Lunatic: Non-spell, Star of David, Young Demon Lord, Scarlet Netherworld,
+//            Scarlet Gensokyo (finale)
+// EoSD shoot ops map to our emitters: aim_mode 1 (ins_68) -> aimed/fan with
+// angleStep (rotating fans); aim_mode 3 (ins_70) -> ring; ins_118 sets the
+// bullet color (Remilia's cards are red #ff8080). EoSD speeds are px/frame.
+//
+// BULLET SIZES: the shoot op's FIRST arg is the sprite index into
+// bullet_types_templates[16] (each a pre-built ANM with its own pixel size,
+// baked into etama.anm — see refs/EoSDecomp/src/BulletManager/). Remilia's
+// cards use sprites 1-9 (Rumia tops out at 3), so her bullets are genuinely
+// larger than Rumia's. Sprite-index -> radius (px) mapping, calibrated to
+// the codebase's "large" references (Demarcation circles r:10, laser r:8):
+//   0:3   1:3.5  2:4   3:4.5  4:5   5:5.5  6:6.5  7:7   8:7.5  9:8
+// Per-card sprite usage (from the ECL shoot ops):
+//   Non-spell Sub18: 3-way->3, 9-way->9, 6-way->6
+//   Star of David Sub30: all->6
+//   Young Demon Lord Sub31: 10/12-ring->9, 14-ring->6
+//   Netherworld Sub32: 24-rings->2, 16-rings->5
+//   Scarlet Shoot Sub36: fast->9, mid->6, slow->1
+//   Scarlet Gensokyo Sub44: all->9
+const REMILIA_NONSPELL = [
+  // EoSD Sub18 (non-spell): three interlocking rotating fans. Stream A:
+  // 3-way fan (aim_mode 1, N-rank count 3), speed 1.8, sweeping 36° per
+  // volley (ins_20 -10005 +0.6283). Red.
+  {
+    t: 0, type: 'aimed', count: 3, spread: 0.1, speed: 1.9,
+    angleStep: 0.6283, interval: 0.2,
+    color: '#ff4455', coreColor: '#ffd0d8', shape: 'circle', r: 4.5
+  },
+  // Stream B: 9-way fan (count 9), speed 3.5, sweeping 22.5° per volley.
+  {
+    t: 0.13, type: 'aimed', count: 9, spread: 1.0472, speed: 3.2,
+    angleStep: 0.3927, interval: 0.26,
+    color: '#ff5566', coreColor: '#ffd8de', shape: 'diamond', r: 8
+  },
+  // Stream C: 6-way fan (count 6 -> 7 for the odd-count house rule), speed
+  // 2.5, sweeping 9° per volley.
+  {
+    t: 0.26, type: 'aimed', count: 7, spread: 0.7854, speed: 2.5,
+    angleStep: 0.1571, interval: 0.26,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'circle', r: 6.5
+  },
+];
+
+// Heaven's Punishment "Star of David" (天罰「スターオブダビデ」, EoSD spell
+// Sub30): two counter-rotating triangles (3-bullet rings at 120° intervals)
+// interlock into a hexagram; a 12-bullet hexagon ring forms the web. Slow
+// red bullets (EoSD speed 0.2) with blue accents at the joints.
+const REMILIA_STAR_OF_DAVID = [
+  // Triangle 1: points at 0°/120°/240°, rotating CW.
+  {
+    t: 0, type: 'ring', count: 3, speed: 1.4, rotSpeed: 0.03,
+    color: '#ff4455', coreColor: '#ffd0d8', shape: 'star', r: 6.5, interval: 0.9
+  },
+  // Triangle 2: offset 60°, rotating CCW — the two triangles make the star.
+  {
+    t: 0, type: 'ring', count: 3, speed: 1.4, rotSpeed: -0.03, rot: 1.0472,
+    color: '#ff5566', coreColor: '#ffd8de', shape: 'star', r: 6.5, interval: 0.9
+  },
+  // The web: a 12-bullet hexagon, slowly rotating, in blue.
+  {
+    t: 0, type: 'ring', count: 12, speed: 1.6, rotSpeed: 0.02,
+    color: '#6688ff', coreColor: '#d0dcff', shape: 'circle', r: 6.5, interval: 1.1
+  },
+  // Aimed fill: slow 3-way fans converging on the player (the "star" bullets).
+  {
+    t: 0.4, type: 'aimed', count: 3, spread: 0.4, speed: 1.8,
+    angleStep: 0.5236, interval: 0.7,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'circle', r: 6.5
+  },
+];
+
+// Divine Punishment "Young Demon Lord" (神罰「幼きデーモンロード」, EoSD
+// spell Sub31, Hard/Lunatic): rotating red rings (12 bullets, rot 0.196 rad/f)
+// + a 6-bullet ring (rot 0.098) + aimed fans. Aggressive.
+const REMILIA_DEMON_LORD = [
+  {
+    t: 0, type: 'ring', count: 12, speed: 1.6, rotSpeed: 0.1963,
+    color: '#ff4455', coreColor: '#ffd0d8', shape: 'circle', r: 8, interval: 0.5
+  },
+  {
+    t: 0.2, type: 'ring', count: 6, speed: 1.5, rotSpeed: 0.0982,
+    color: '#ff5566', coreColor: '#ffd8de', shape: 'diamond', r: 6.5, interval: 0.5
+  },
+  {
+    t: 0.1, type: 'aimed', count: 5, spread: 0.3, speed: 2.5,
+    angleStep: 0.3, interval: 0.5,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'circle', r: 8
+  },
+];
+
+// Nether Sign "Scarlet Netherworld" (冥符「紅色の冥界」, EoSD spell Sub32):
+// two counter-rotating 24-bullet rings (rot ±0.0245 rad/f) + two 16-bullet
+// rings (rot ±0.02 rad/f). The classic rotating red-ring barrage.
+const REMILIA_NETHERWORLD = [
+  {
+    t: 0, type: 'ring', count: 24, speed: 1.8, rotSpeed: 0.0245,
+    color: '#ff4455', coreColor: '#ffd0d8', shape: 'circle', r: 4, interval: 0.7
+  },
+  {
+    t: 0, type: 'ring', count: 24, speed: 1.8, rotSpeed: -0.0245,
+    color: '#ff5566', coreColor: '#ffd8de', shape: 'circle', r: 4, interval: 0.7
+  },
+  {
+    t: 0.35, type: 'ring', count: 16, speed: 2.2, rotSpeed: 0.02,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'diamond', r: 5.5, interval: 0.7
+  },
+  {
+    t: 0.7, type: 'ring', count: 16, speed: 2.2, rotSpeed: -0.02,
+    color: '#ff7788', coreColor: '#ffe8ec', shape: 'diamond', r: 5.5, interval: 0.7
+  },
+];
+
+// Scarlet Sign "Scarlet Shoot" (紅符「スカーレットシュート」, EoSD spell
+// Sub38): three fast aimed streams (Sub36: 9-way @ 6.0, 6-way @ 4.0, 5-way
+// @ 3.0) that sweep across the screen on a slow angleStep and loop for the
+// whole card. Red.
+const REMILIA_SCARLET_SHOOT = [
+  {
+    t: 0, type: 'aimed', count: 9, spread: 0.15, speed: 4.0,
+    angleStep: 0.1, interval: 0.3,
+    color: '#ff4455', coreColor: '#ffd0d8', shape: 'circle', r: 8
+  },
+  {
+    t: 0.15, type: 'aimed', count: 7, spread: 0.15, speed: 3.5,
+    angleOffset: 0.7854, angleStep: -0.1, interval: 0.3,
+    color: '#ff5566', coreColor: '#ffd8de', shape: 'circle', r: 6.5
+  },
+  {
+    t: 0.3, type: 'aimed', count: 5, spread: 0.15, speed: 3.0,
+    angleOffset: -0.7854, angleStep: 0.1, interval: 0.3,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'circle', r: 3.5
+  },
+];
+
+// "Scarlet Gensokyo" (「紅色の幻想郷」, EoSD spell Sub44, Lunatic finale):
+// rotating rings (10, 12, 17, 12 bullets) with drift, red. The grand finale.
+const REMILIA_SCARLET_GENSO = [
+  {
+    t: 0, type: 'ring', count: 10, speed: 3.0, rotSpeed: 0.023,
+    color: '#ff4455', coreColor: '#ffd0d8', shape: 'circle', r: 8, interval: 0.8
+  },
+  {
+    t: 0.2, type: 'ring', count: 12, speed: 2.5, rotSpeed: -0.0245,
+    color: '#ff5566', coreColor: '#ffd8de', shape: 'circle', r: 8, interval: 0.8
+  },
+  {
+    t: 0.4, type: 'ring', count: 17, speed: 2.0, rotSpeed: 0.02,
+    color: '#ff6677', coreColor: '#ffe0e5', shape: 'diamond', r: 8, interval: 0.8
+  },
+  {
+    t: 0.6, type: 'ring', count: 12, speed: 1.5, rotSpeed: -0.02,
+    color: '#ff7788', coreColor: '#ffe8ec', shape: 'circle', r: 8, interval: 0.8
+  },
+];
+
+// ── Alice — Bishop (value 3). Dolls. ─────────────────────────────────────
+// Pattern mechanics mined from the REAL PCCB (Touhou 7) stage-3 ECL script
+// (pcb_extract/disasm/ecldata3.txt), decoded against the PCCB ECL VM. Alice is
+// the stage-3 boss; her cards are the doll cards. Card banners verified in the
+// disasm (ins_90 banner strings):
+//   Otome Bunraku (Sub27, "操符「乙女文楽」"), Hakuai no Furansu Ningyou
+//   (Sub42, "蒼符「博愛の仏蘭西人形」", the French Dolls), Hakuai no Orurean
+//   Ningyou (Sub46, "紅符「紅毛の和蘭人形」", the Dutch Dolls).
+// PCCB shoot ops map to our emitters: ins_54 sets the aim (mode 4 = player,
+// speed); ins_64/ins_65/ins_67 are the shoot ops (aim_mode, count, ..., speed,
+// spread, ..., angleStep); ins_52 is a random angle in [-π, π]; ins_27 is a
+// "change over time" op that drives the dolls' orbit radius/speed (the
+// CopyMainBossMovement orbit). The doll count is read from a var per difficulty
+// (Sub42: E 4 / N 6 / H 10 / L 8; Sub46: 8).
+// This port uses four of them, simplified to the engine's emitter vocabulary:
+//   Normal:  Non-spell, Maiden's Bunraku, French Dolls
+//   Lunatic: Non-spell, Maiden's Bunraku, French Dolls, Dutch Dolls
+// Alice's palette is blue (#66aaff / #88ccff) with purple (#cc66ff) and red
+// (#ff6666) accents (her dolls wear blue dresses; the red/green waves are the
+// Dutch Dolls' rings).
+//
+// NOTE on one-shot vs repeating emits: a phase emit with no `interval` defaults
+// to interval 0.2 (engine.js _emitPattern), so a doll emit must carry
+// `repeat: 1` to fire exactly once (otherwise it re-spawns a new doll every
+// 0.2s and the field saturates to the 2000-bullet cap).
+
+// PCCB Sub3 (non-spell): two counter-rotating aimed fans sweeping across the
+// screen (ins_64 !H: count 6, speed 1.3, spread 0.5, angleStep 0.6283 = 36°;
+// ins_64 !L: count 4, speed 2.1, spread 0.5, angleStep 0.3927 = 22.5°) plus a
+// slow expanding ring (ins_54, π/2). Blue — Alice's signature. Odd counts per
+// the house rule.
+const ALICE_NONSPELL = [
+  {
+    t: 0, type: 'aimed', count: 5, spread: 0.5, speed: 1.6,
+    angleStep: 0.6283, interval: 0.2,
+    color: '#66aaff', coreColor: '#e0f0ff', shape: 'circle', r: 5
+  },
+  // Counter-rotating fan (the second stream of the non-spell).
+  {
+    t: 0.1, type: 'aimed', count: 5, spread: 0.5, speed: 1.4,
+    angleStep: -0.3927, interval: 0.22,
+    color: '#88ccff', coreColor: '#e8f4ff', shape: 'diamond', r: 4
+  },
+  // Slow expanding ring (purple, Alice's secondary).
+  {
+    t: 0.3, type: 'ring', count: 14, speed: 1.3, rotSpeed: 0.02,
+    interval: 1.0,
+    color: '#cc66ff', coreColor: '#f0d0ff', shape: 'petal', r: 5
+  },
+];
+
+// Build `count` one-shot doll emits evenly spaced around a full circle. Used
+// for the French/Dutch orbiting dolls (as phase emits) and the Bunraku bubble
+// burst (as a spawnEmits list). `o.orbitRadius`/`o.orbitSpeed` make the dolls
+// orbit the boss (CopyMainBossMovement); omit them for straight-flyers.
+// `o.destructible: false` makes the dolls invulnerable spell emitters (the
+// orbiting French/Dutch dolls — see the engine 'doll' case for why).
+function aliceDollEmits(count, o) {
+  const arr = [];
+  for (let i = 0; i < count; i++) {
+    arr.push({
+      t: (o.t0 || 0) + i * (o.stagger || 0.12),
+      type: 'doll',
+      count: 1,
+      angle: (i / count) * TAU_LOCAL, // even full-circle start positions
+      repeat: 1,                       // fire ONCE (see the note above)
+      speed: o.speed !== undefined ? o.speed : 0,
+      orbitRadius: o.orbitRadius,
+      orbitSpeed: o.orbitSpeed,
+      hp: o.hp || 3,
+      r: o.r || 10,
+      shape: 'petal',
+      interval: o.interval,
+      color: o.color,
+      coreColor: o.coreColor,
+      shoot: o.shoot,
+      deathBurst: o.deathBurst,
+      destructible: o.destructible,    // undefined = destructible (default)
+      // Cap on how many times the doll fires its shoot (undefined = unlimited).
+      // The orbiting French/Dutch dolls fire for the whole card; the straight-
+      // flying Bunraku dolls are capped so they stop shooting before reaching
+      // the bottom (see ALICE_BUNRAKU).
+      spawnCount: o.spawnCount,
+    });
+  }
+  return arr;
+}
+
+// Puppeteer Sign "Maiden's Bunraku" (操符「乙女文楽」, PCCB Sub27, simplified):
+// a large blue bubble sits at Alice and, after a beat, bursts into 8 dolls
+// flying outward in all directions (Sub28/29: ~10 dolls fly random directions).
+// Each doll fires straight 3-way fans of blue bullets at the player and pops
+// into a red burst on destruction (the card's red-bullet rain). The real card
+// also fires a red laser per doll — dropped here for the simplified port.
+const ALICE_BUNRAKU = [
+  {
+    t: 0, type: 'spawnBullet', count: 1, speed: 0,
+    r: 18, shape: 'circle', color: '#66aaff', coreColor: '#d0e8ff',
+    hp: 3,
+    repeat: 4, interval: 4,            // four bubbles across the card (batches overlap)
+    spawnEvery: 45, spawnCount: 1,     // burst 0.75s after appearing
+    life: 60,                          // the bubble is gone right after bursting
+    // This card is already on the hard side (its dolls fire to the bottom), so
+    // it's excluded from the Lunatic density bump and tuned by a shoot-budget
+    // cap instead: each doll fires 3 fans, then stops shooting and drifts off
+    // harmlessly. (See scalePhase's `noLunaticScale` handling.)
+    noLunaticScale: true,
+    spawnEmits: aliceDollEmits(8, {
+      speed: 1.0,                      // straight-flyers, no orbit
+      interval: 0.8,
+      spawnCount: 3,                   // fire 3 fans then stop (was: fired the whole card)
+      color: '#88ccff', coreColor: '#e8f4ff',
+      // Straight 3-way fan of blue bullets at the player (the doll's
+      // "straight lines of blue bullets").
+      shoot: { type: 'fan', count: 3, spread: 0.3, speed: 2.0,
+               color: '#66aaff', coreColor: '#e0f0ff', shape: 'circle', r: 4 },
+      // The red-bullet burst on destruction.
+      deathBurst: { type: 'ring', count: 10, speed: 1.6,
+                    color: '#ff6666', coreColor: '#ffd0d0', shape: 'circle', r: 4 },
+    }),
+  },
+];
+
+// Soufu "French Dolls" (蒼符「博愛の仏蘭西人形」, PCCB Sub42): N dolls (E 4 /
+// N 6 / H 10 / L 8) orbit Alice (ins_27 drives orbit radius ~96 + orbit speed
+// ~0.052 rad/f, CopyMainBossMovement). Each doll fires a single blue arrowhead
+// OUTWARD (aimFrom:'boss'); the arrowhead then splits into white + purple
+// bullets that fly back toward the player — the card's signature "outward
+// bullets that split inward." (The real card aims the inward split at Alice;
+// we aim at the player so the card stays a real threat.)
+const ALICE_FRENCH = aliceDollEmits(6, {
+  orbitRadius: 90, orbitSpeed: 0.02,   // 6 dolls (E 4 / N 6 / H 10 / L 8)
+  speed: 0, interval: 0.8,
+  color: '#88ccff', coreColor: '#e8f4ff',
+  // The orbiting dolls are the spell's emitters (PCCB Sub43 entities), not
+  // hazards: invulnerable. They circle on the shot line to the boss, and
+  // player shots are consumed by destructible bullets — shootable dolls let
+  // the player's own fire kill all six (~14s into the 22s card) and the
+  // field runs dry for the last ~8s. (The arrowheads they fire stay
+  // shootable, so shooting down the split before it happens still works.)
+  destructible: false,
+  // The blue arrowhead flies OUTWARD (aimFrom:'boss'); after 0.5s it splits
+  // (spawnEvery 30, spawnCount 1) into the inward white + purple split, then
+  // the arrowhead itself fades (life 45).
+  shoot: {
+    type: 'spawnBullet', count: 1, speed: 2.0, aimFrom: 'boss',
+    r: 6, shape: 'star', color: '#66aaff', coreColor: '#d0e8ff',
+    spawnEvery: 30, spawnCount: 1, life: 45,
+    spawnEmits: [
+      // The inward white split (the "split inward" mechanic): the bullets fly
+      // back TOWARD Alice (aimAt:'boss'), converging on her from the outward
+      // arrowheads — the card's signature.
+      { type: 'fan', count: 5, spread: 0.8, speed: 1.6, aimAt: 'boss',
+        color: '#ffffff', coreColor: '#ffffff', shape: 'circle', r: 4 },
+      // Direct aimed pressure at the player (keeps the card a real threat).
+      { type: 'aimed', count: 3, spread: 0.3, speed: 1.8,
+        color: '#cc66ff', coreColor: '#f0d0ff', shape: 'diamond', r: 4 },
+    ],
+  },
+});
+
+// Soufu "Dutch Dolls" (紅符「紅毛の和蘭人形」, PCCB Sub46): eight dolls
+// (ins_4([10029], 8)) orbit Alice at a small radius (ins_5([10036], 0.0218)
+// rotation, ins_5([10004], 32) radius), each firing a ring (Sub47, 20 bullets)
+// that is spun red -> green (the card's red -> green wave). Simplified to
+// orbiting dolls firing rotating red/green-alternating rings.
+const ALICE_DUTCH = aliceDollEmits(8, {
+  orbitRadius: 70, orbitSpeed: 0.025,  // 8 dolls
+  speed: 0, interval: 0.8,
+  color: '#ff8888', coreColor: '#ffd0d0',
+  // Same as French: the orbiting dolls are the spell's emitters, not hazards
+  // — invulnerable, so the player's fire can't empty the card by shooting
+  // down every emitter (see the ALICE_FRENCH note).
+  destructible: false,
+  // A rotating ring of red bullets, alternating green (the card's red -> green
+  // "spun" wave).
+  shoot: { type: 'ring', count: 12, speed: 1.8, rotSpeed: 0.03,
+           color: '#ff6666', coreColor: '#ffd0d0', colorAlt: '#66cc66',
+           shape: 'circle', r: 4 },
+});
+
+// ── Patchouli — Bishop (value 3). Elemental magic. ────────────────────────
+// Pattern mechanics mined from the REAL EoSD (Touhou 6) stage-4 ECL script
+// (eosd_extract/ecl/disasm/ecldata4_utf8.txt), decoded against the EoSD ECL
+// VM (refs/EoSDecomp). Patchouli is the stage-4 boss; her fight is a chain of
+// elemental spell cards (Fire/Water/Wood/Earth/Metal), each with an EN-rank
+// and an H/L-rank variant, dispatched by the boss controller (Sub37, life
+// 16000) via ins_115/ins_116 (timeout + sub). Card banners verified in the
+// disasm (ins_93 banner strings):
+//   Fire   Agni Shine (Sub42, "火符「アグニシャイン」") / Agni Shine Advanced
+//          (Sub43) / Agni Radiance (Sub44)
+//   Water  Princess Undine (Sub45, "水符「プリンセスウンディネ」") / Berry in
+//          Lake (Sub46)
+//   Wood   Sylph Horn (Sub47) / Green Storm (Sub49)
+//   Earth  Lazy Trilliton (Sub50) / Trilliton Shake (Sub52)
+//   Metal  Metal Fatigue (Sub53, "金符「メタルファティーグ」") / Silver Dragon
+//          (Sub54)
+// EoSD shoot ops map to our emitters: aim_mode 0/1 (ins_67/ins_68) →
+// aimed/fan with angleStep; aim_mode 3 (ins_70) → ring; the ins_82 angle
+// sweep (±0.0245 rad/f) → per-fire rotStep (rotating rings); ins_20/ins_21
+// angle steps → rotating streams. EoSD speeds are px/frame.
+// This port uses a representative set, simplified to the engine's emitter
+// vocabulary (EN-rank cards for Normal, H/L-rank cards for Lunatic):
+//   Normal:  Non-spell, Agni Shine, Princess Undine, Metal Fatigue
+//   Lunatic: Non-spell, Agni Shine Advanced, Berry in Lake, Silver Dragon,
+//            Agni Radiance
+// The non-spell (Sub39) spawns the five elemental entities; simplified to a
+// five-element barrage. Palette: fire (orange), water (blue), wood (green),
+// earth (gold), metal (silver), with Patchouli's purple (#cc88ff) signature.
+//
+// WAVE STRUCTURE (the EoSD "setup -> attack" shape, NOT one flat pattern held
+// for the whole card). Every card is built as distinct timed WAVES:
+//   W1 "Setup"  t=0..~3s    low-density priming / telegraph (the tell before
+//                           the barrage — a single slow ring or aimed stream)
+//   W2 "Attack" t~3..~10s   the card's SIGNATURE barrage (the ring/spiral/
+//                           aimed fan that defines the card)
+//   W3 "Turn"   t~10..~14s  the pattern CHANGES — a second, distinct barrage
+//                           (EoSD's "then change angle and expand the circle
+//                           outwards"; lasers, faster rings, swinging fans)
+//   W4 "Tail"   t~14..end   a final, calmer burst as the card winds down
+// Waves are contiguous (no empty field) and use the engine's `t` offsets,
+// finite `repeat` + `period` (repeating attack blocks with a breather),
+// `rotStep` (rotating rings), `angleStep` (swinging aim), and laser `warn`
+// (telegraphs). This mirrors the real EoSD card shape: 120f setup move ->
+// N attack passes -> 120f tail.
+
+// Non-spell (Sub39, simplified): the five elemental entities' barrage, in
+// waves — gather (five-color ring + purple stream) -> fire+water barrage ->
+// purple signature fan over wood -> five-color scatter over metal.
+const PATCHOULI_NONSPELL = [
+  // W1 Setup: the five elements gather — a slow five-color ring and a single
+  // slow purple aimed stream (Patchouli's signature).
+  { t: 0, type: 'ring', count: 10, speed: 1.2, rotStep: 0.08, interval: 1.0,
+    colors: ['#ff8844', '#44aaff', '#66cc66', '#ffcc44', '#ccccdd'], colorStep: 0.6,
+    color: '#ff8844', coreColor: '#fff0d0', shape: 'circle', r: 5 },
+  { t: 0.5, type: 'aimed', count: 1, speed: 1.6, interval: 0.9,
+    color: '#cc88ff', coreColor: '#f0d0ff', shape: 'star', r: 5 },
+  // W2 Attack: the element barrage — counter-rotating fire + water rings.
+  { t: 3, type: 'ring', count: 16, speed: 2.0, rotStep: 0.12, interval: 0.7,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 5 },
+  { t: 3.3, type: 'ring', count: 16, speed: 1.7, rotStep: -0.14, interval: 0.8,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 5 },
+  // W3 Turn: the purple aimed fan (her signature) swings, over a wood ring.
+  { t: 9, type: 'aimed', count: 5, spread: 0.5, speed: 2.4, angleStep: 0.4,
+    interval: 0.5, color: '#cc88ff', coreColor: '#f0d0ff', shape: 'star', r: 5 },
+  { t: 9.2, type: 'ring', count: 12, speed: 1.4, rotStep: 0.1, interval: 1.0,
+    color: '#66cc66', coreColor: '#e0ffe0', shape: 'diamond', r: 5 },
+  // W4 Tail: the five elements scatter — a five-color ring over a slow metal ring.
+  { t: 13, type: 'ring', count: 20, speed: 2.2, rotStep: 0.06, interval: 0.9,
+    colors: ['#ff8844', '#44aaff', '#66cc66', '#ffcc44', '#ccccdd'], colorStep: 0.3,
+    color: '#ff8844', coreColor: '#fff0d0', shape: 'circle', r: 5 },
+  { t: 13.3, type: 'ring', count: 12, speed: 1.0, rotStep: -0.08, interval: 1.1,
+    color: '#ccccdd', coreColor: '#ffffff', shape: 'circle', r: 4 },
+];
+
+// Fire Sign "Agni Shine" (火符「アグニシャイン」, EoSD Sub42, EN): "waves of
+// fireballs that circle around her, then change angle and expand the circle
+// outwards." Waves: a single slow fire ring circles her (setup) -> the
+// signature three counter-rotating fire rings (speeds 2.2/1.5/0.7, ins_82
+// sweep -> rotStep) -> the circle changes angle and expands (fast ring +
+// swinging fan) -> a slow ember ring settles (tail).
+const PATCHOULI_AGNI_SHINE = [
+  // W1 Setup: a single slow fire ring circles her — the circle the attack
+  // will expand.
+  { t: 0, type: 'ring', count: 12, speed: 1.0, rotStep: 0.1, interval: 1.0,
+    color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  // W2 Attack: the signature — three counter-rotating fire rings.
+  { t: 3, type: 'ring', count: 18, speed: 2.2, rotStep: 0.16, interval: 0.9,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 5 },
+  { t: 3.3, type: 'ring', count: 18, speed: 1.5, rotStep: -0.16, interval: 1.0,
+    color: '#ff6622', coreColor: '#ffe0c0', shape: 'star', r: 5 },
+  { t: 3.6, type: 'ring', count: 14, speed: 0.7, rotStep: 0.12, interval: 1.2,
+    color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  // W3 Turn: the circle changes angle and expands outward — a fast expanding
+  // fire ring plus a swinging fire fan.
+  { t: 10, type: 'ring', count: 22, speed: 2.8, rotStep: 0.1, interval: 0.6,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 5 },
+  { t: 10.2, type: 'fan', count: 7, spread: 0.6, speed: 2.4, angleStep: 0.3,
+    interval: 0.5, color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  // W4 Tail: the fire settles — a slow ember ring.
+  { t: 14, type: 'ring', count: 16, speed: 1.4, rotStep: -0.08, interval: 1.0,
+    color: '#ff6622', coreColor: '#ffe0c0', shape: 'circle', r: 4 },
+];
+
+// Fire Sign "Agni Shine Advanced" (火符「アグニシャイン上級」, EoSD Sub43,
+// H/L): the Agni Shine shape, denser + faster (two counter-rotating fire
+// rings, speed 2.0 / L 2.5). Waves: a fast ring primes -> two counter-
+// rotating fire rings -> a fast expanding ring + swinging fan -> a fast
+// ember ring.
+const PATCHOULI_AGNI_ADV = [
+  // W1 Setup: a fast single fire ring primes.
+  { t: 0, type: 'ring', count: 14, speed: 1.6, rotStep: 0.14, interval: 0.8,
+    color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  // W2 Attack: two counter-rotating fire rings (speeds 2.0 / 2.5).
+  { t: 3, type: 'ring', count: 22, speed: 2.0, rotStep: 0.18, interval: 0.8,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 5 },
+  { t: 3.3, type: 'ring', count: 22, speed: 2.5, rotStep: -0.18, interval: 0.8,
+    color: '#ff5522', coreColor: '#ffe0c0', shape: 'star', r: 5 },
+  // W3 Turn: a fast expanding fire ring + a swinging fire fan.
+  { t: 10, type: 'ring', count: 26, speed: 3.0, rotStep: 0.12, interval: 0.55,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 5 },
+  { t: 10.2, type: 'fan', count: 9, spread: 0.7, speed: 2.6, angleStep: 0.35,
+    interval: 0.45, color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  // W4 Tail: a fast ember ring.
+  { t: 14, type: 'ring', count: 18, speed: 2.0, rotStep: -0.1, interval: 0.8,
+    color: '#ff6622', coreColor: '#ffe0c0', shape: 'circle', r: 4 },
+];
+
+// Water Sign "Princess Undine" (水符「プリンセスウンディネ」, EoSD Sub45,
+// EN): an aimed fan (ins_67 mode 0, speed 3.5, spread 0.35) + a rotating
+// spiral (ins_21) + 3-way thin lasers (ins_86). Waves: a slow aimed stream +
+// ring prime the lake -> the signature spiral + aimed fan -> 3-way thin
+// lasers sweep over a faster spiral -> the lake recedes (slow ring + fan).
+const PATCHOULI_UNDINE = [
+  // W1 Setup: a slow aimed water stream + a slow water ring — the lake stills.
+  { t: 0, type: 'aimed', count: 3, spread: 0.3, speed: 1.8, interval: 0.8,
+    color: '#88ddff', coreColor: '#e0f4ff', shape: 'circle', r: 4 },
+  { t: 0.5, type: 'ring', count: 12, speed: 1.0, rotStep: 0.08, interval: 1.1,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 4 },
+  // W2 Attack: the signature — a rotating water spiral over an aimed water
+  // fan. (Normal tuning: the spiral fires a touch slower than the Lunatic
+  // Berry in Lake version, so the field stays readable.)
+  { t: 3, type: 'spiral', arms: 6, rotSpeed: 0.35, speed: 2.5, interval: 0.16,
+    color: '#66ccff', coreColor: '#e0f4ff', shape: 'diamond', r: 4 },
+  { t: 3.2, type: 'aimed', count: 7, spread: 0.35, speed: 3.5, interval: 0.4,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 5 },
+  // W3 Turn: the 3-way thin lasers (EoSD ins_86) sweep, over a faster spiral.
+  // Each firing telegraphs (warn) then goes solid; repeat+period gives the
+  // attack-block / breather / attack-block rhythm. (Normal tuning: slower
+  // sweep + longer refire gap + shorter beam life than Berry in Lake, so the
+  // three beams read as distinct sweeps with a clear gap between them.)
+  { t: 10, type: 'laser', count: 3, speed: 0, sweep: 0.35,
+    interval: 0.7, repeat: 3, period: 4, warn: 1.0, life: 24,
+    color: '#66ccff', coreColor: '#e0f4ff', shape: 'diamond', r: 4 },
+  { t: 10.3, type: 'spiral', arms: 6, rotSpeed: 0.45, speed: 2.6, interval: 0.14,
+    color: '#88ddff', coreColor: '#e0f4ff', shape: 'diamond', r: 4 },
+  // W4 Tail: the lake recedes — a slow water ring and a final aimed fan.
+  { t: 14, type: 'ring', count: 16, speed: 1.2, rotStep: -0.08, interval: 1.0,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 4 },
+  { t: 14.3, type: 'aimed', count: 5, spread: 0.4, speed: 2.2, interval: 0.6,
+    color: '#66ccff', coreColor: '#e0f4ff', shape: 'circle', r: 4 },
+];
+
+// Water Sign "Berry in Lake" (水符「ベリーインレイク」, EoSD Sub46, H/L): the
+// Princess Undine shape, denser + faster (aimed fan ins_69 mode 2, speed 3.0,
+// spread 0.4). Waves: a denser stream + ring -> a denser spiral + aimed fan
+// -> 2 rotating lasers over a faster spiral -> a denser recede.
+const PATCHOULI_BERRY = [
+  // W1 Setup: a denser aimed water stream + a water ring.
+  { t: 0, type: 'aimed', count: 3, spread: 0.35, speed: 2.0, interval: 0.7,
+    color: '#88ddff', coreColor: '#e0f4ff', shape: 'circle', r: 4 },
+  { t: 0.5, type: 'ring', count: 14, speed: 1.2, rotStep: 0.1, interval: 0.9,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 4 },
+  // W2 Attack: a denser aimed fan + a faster spiral.
+  { t: 3, type: 'spiral', arms: 8, rotSpeed: 0.45, speed: 2.8, interval: 0.1,
+    color: '#66ccff', coreColor: '#e0f4ff', shape: 'diamond', r: 4 },
+  { t: 3.2, type: 'aimed', count: 9, spread: 0.4, speed: 3.0, interval: 0.35,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 5 },
+  // W3 Turn: 2 rotating lasers (EoSD) over a faster spiral.
+  { t: 10, type: 'laser', count: 2, speed: 0, sweep: 0.6,
+    interval: 0.35, repeat: 3, period: 4, warn: 1.0, life: 30,
+    color: '#66ccff', coreColor: '#e0f4ff', shape: 'diamond', r: 4 },
+  { t: 10.3, type: 'spiral', arms: 10, rotSpeed: 0.55, speed: 3.0, interval: 0.09,
+    color: '#88ddff', coreColor: '#e0f4ff', shape: 'diamond', r: 4 },
+  // W4 Tail: a denser water ring + aimed fan.
+  { t: 14, type: 'ring', count: 18, speed: 1.4, rotStep: -0.1, interval: 0.9,
+    color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', r: 4 },
+  { t: 14.3, type: 'aimed', count: 7, spread: 0.45, speed: 2.4, interval: 0.55,
+    color: '#66ccff', coreColor: '#e0f4ff', shape: 'circle', r: 4 },
+];
+
+// Metal Sign "Metal Fatigue" (金符「メタルファティーグ」, EoSD Sub53, EN): a
+// fast rotating ring (ins_70 mode 3, speed 4.0) whose base angle steps by π/4
+// each pass (ins_20) — a "rotating stream" of silver bullets. Waves: a slow
+// steel ring primes -> the signature fast silver ring (π/4 per-fire step) ->
+// a counter-rotating steel ring over a swinging metal fan -> a slow steel
+// ring settles.
+const PATCHOULI_METAL_FATIGUE = [
+  // W1 Setup: a slow steel ring primes.
+  { t: 0, type: 'ring', count: 12, speed: 1.6, rotStep: 0.2, interval: 0.9,
+    color: '#aabbcc', coreColor: '#eef0ff', shape: 'circle', r: 4 },
+  // W2 Attack: the signature — a fast silver ring whose base angle steps π/4
+  // per firing (EoSD ins_20, 8 passes). 18 bullets (not a multiple of 8) so
+  // the π/4 rotation is visible.
+  { t: 3, type: 'ring', count: 18, speed: 4.0, rotStep: 0.7854, interval: 0.5,
+    color: '#ccccdd', coreColor: '#ffffff', shape: 'diamond', r: 5 },
+  // W3 Turn: a counter-rotating steel ring over a swinging metal fan.
+  { t: 10, type: 'ring', count: 16, speed: 2.4, rotStep: -0.4, interval: 0.6,
+    color: '#aabbcc', coreColor: '#eef0ff', shape: 'circle', r: 4 },
+  { t: 10.2, type: 'fan', count: 7, spread: 0.5, speed: 2.6, angleStep: 0.4,
+    interval: 0.5, color: '#ccccdd', coreColor: '#ffffff', shape: 'diamond', r: 4 },
+  // W4 Tail: a slow steel ring.
+  { t: 14, type: 'ring', count: 14, speed: 1.6, rotStep: 0.15, interval: 0.9,
+    color: '#aabbcc', coreColor: '#eef0ff', shape: 'circle', r: 4 },
+];
+
+// Metal Sign "Silver Dragon" (金符「シルバードラゴン」, EoSD Sub54, H/L): a
+// very fast rotating ring (ins_70 mode 3, speed 6.0) — the "silver dragon"
+// stream. Waves: a fast steel ring primes -> the signature very fast silver
+// ring -> a counter-rotating fast ring over a swinging metal fan -> a fast
+// steel ring.
+const PATCHOULI_SILVER_DRAGON = [
+  // W1 Setup: a fast steel ring primes.
+  { t: 0, type: 'ring', count: 14, speed: 2.4, rotStep: 0.3, interval: 0.7,
+    color: '#aabbcc', coreColor: '#eef0ff', shape: 'circle', r: 4 },
+  // W2 Attack: the "silver dragon" — a very fast rotating silver ring.
+  { t: 3, type: 'ring', count: 18, speed: 6.0, rotStep: 0.5, interval: 0.4,
+    color: '#ccccdd', coreColor: '#ffffff', shape: 'diamond', r: 5 },
+  // W3 Turn: a counter-rotating fast ring over a swinging metal fan.
+  { t: 10, type: 'ring', count: 16, speed: 3.5, rotStep: -0.3, interval: 0.5,
+    color: '#aabbcc', coreColor: '#eef0ff', shape: 'circle', r: 4 },
+  { t: 10.2, type: 'fan', count: 9, spread: 0.6, speed: 3.0, angleStep: 0.45,
+    interval: 0.45, color: '#ccccdd', coreColor: '#ffffff', shape: 'diamond', r: 4 },
+  // W4 Tail: a fast steel ring.
+  { t: 14, type: 'ring', count: 16, speed: 2.8, rotStep: 0.2, interval: 0.7,
+    color: '#aabbcc', coreColor: '#eef0ff', shape: 'circle', r: 4 },
+];
+
+// Fire Sign "Agni Radiance" (火符「アグニレイディアンス」, EoSD Sub44, H/L
+// finale): two counter-rotating fire rings (speeds 1.5/2.0) + large
+// random-angle fire bullets (ins_75). Waves: a slow fire ring + a single
+// large bullet prime -> two counter-rotating fire rings -> large fire
+// bullets at sweeping angles over a swinging fan -> a slow fire ring + fan
+// settle.
+const PATCHOULI_AGNI_RADIANCE = [
+  // W1 Setup: a slow fire ring + a single large fire bullet.
+  { t: 0, type: 'ring', count: 12, speed: 1.2, rotStep: 0.1, interval: 1.0,
+    color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  { t: 0.5, type: 'aimed', count: 1, speed: 2.0, interval: 1.2,
+    color: '#ffcc44', coreColor: '#fff0d0', shape: 'star', r: 6 },
+  // W2 Attack: two counter-rotating fire rings (speeds 1.5 / 2.0).
+  { t: 3, type: 'ring', count: 16, speed: 1.5, rotStep: 0.14, interval: 0.9,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 5 },
+  { t: 3.3, type: 'ring', count: 16, speed: 2.0, rotStep: -0.14, interval: 0.9,
+    color: '#ff6622', coreColor: '#ffe0c0', shape: 'star', r: 5 },
+  // W3 Turn: large fire bullets at sweeping angles (EoSD ins_75) over a
+  // swinging fire fan.
+  { t: 10, type: 'aimed', count: 3, spread: 0.3, speed: 3.0, angleStep: 0.5,
+    interval: 0.8, color: '#ffcc44', coreColor: '#fff0d0', shape: 'star', r: 6 },
+  { t: 10.2, type: 'fan', count: 7, spread: 0.6, speed: 2.4, angleStep: 0.35,
+    interval: 0.55, color: '#ffaa66', coreColor: '#fff0e0', shape: 'circle', r: 4 },
+  // W4 Tail: a slow fire ring + a slow aimed fan.
+  { t: 14, type: 'ring', count: 18, speed: 1.4, rotStep: -0.08, interval: 1.0,
+    color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', r: 4 },
+  { t: 14.3, type: 'aimed', count: 5, spread: 0.5, speed: 2.2, angleStep: 0.35,
+    interval: 0.6, color: '#ffaa66', coreColor: '#fff0e0', shape: 'star', r: 5 },
+];
+
+// ── Yuyuko — Rook (value 5). Death / butterfly / cherry-blossom. ──────────
+// Pattern mechanics mined from the REAL PCCB (Touhou 7) stage-6 ECL script
+// (pcb_extract/disasm/ecldata6.txt), decoded against the PCCB ECL VM. TH07
+// reuses the EoSD ECL engine; opcode authority is refs/th07/src/th07/
+// EclManager.hpp (ECL_* enum) + refs/EoSDecomp. Yuyuko is the stage-6 boss
+// and main antagonist of PCCB. Card banners verified in the disasm (ins_90
+// banner strings; rank 0 = non-spell, 3 = spell, -1 = final spell):
+//   Rikudōken "Ichinen Mugyōkō" (Sub23, "六道剣「一念無量劫」", non-spell),
+//   Bō "Bōgakyō" (Sub43-47, "亡郷「亡我郷」"), Bōbu "Seishasha Hitsumetsu no
+//   Kotowari" (Sub50-51, "亡舞「生者必滅の理」"), Karei "Ghost Butterfly"
+//   (Sub52-54, "華霊「ゴーストバタフライ」"), Yūkyoku "Repository of Hirokawa"
+//   (Sub55-57, "幽曲「リポジトリ・オブ・ヒロカワ」"), Ōfu "Kanzen naru
+//   Sumizome no Sakura" (Sub58-59, "桜符「完全なる墨染の桜」"), Hankondō
+//   (Sub62-68, "「反魂蝶」", final spell).
+// PCCB shoot ops map to our emitters: ins_54 sets the aim (mode 4 = player,
+// speed); ins_64/ins_65/ins_67 are the shoot ops (aim_mode, count, ..., speed,
+// spread, ..., angleStep); ins_52 is a random angle in [-π, π]; ins_79
+// (ECL_INIT_BULLET_CMD) sets per-group bullet physics (the angle/speed
+// acceleration that makes Bōgakyō's bullets curve); ins_93/ins_92 spawn the
+// sub-enemies (the butterflies); ins_100 spawns the decorative effects.
+// This port uses five of them, simplified to the engine's emitter vocabulary:
+//   Normal:  Non-spell, Bō "Bōgakyō", Bōbu "Seishasha Hitsumetsu no Kotowari",
+//            Karei "Ghost Butterfly"
+//   Lunatic: + Hankondō (final spell)
+// Yuyuko's palette is cold blue (#6688ff / #88aaff) with violet (#9966ff) and
+// pink cherry-blossom (#ff99cc) accents.
+//
+// NOTE: Yuyuko stays `move: 'still'` — her PCCB patterns fire from a
+// mostly-static position (the boss drifts a few px via ins_55, but the cards
+// are authored around a fixed origin), so a static boss keeps the patterns
+// true to the source.
+
+// Build `count` one-shot butterfly (doll) emits evenly spaced around a full
+// circle. Used for the Karei/Hankondō butterfly swarms. `o.orbitRadius`/
+// `o.orbitSpeed` make the butterflies orbit Yuyuko (the PCCB butterflies circle
+// the boss); omit them for straight-flyers.
+function yuyukoButterflyEmits(count, o) {
+  const arr = [];
+  for (let i = 0; i < count; i++) {
+    arr.push({
+      t: (o.t0 || 0) + i * (o.stagger || 0.15),
+      type: 'doll',
+      count: 1,
+      angle: (i / count) * TAU_LOCAL, // even full-circle start positions
+      repeat: 1,                       // fire ONCE (see the note above)
+      speed: o.speed !== undefined ? o.speed : 0,
+      orbitRadius: o.orbitRadius,
+      orbitSpeed: o.orbitSpeed,
+      hp: o.hp || 3,
+      r: o.r || 10,
+      shape: 'petal',
+      interval: o.interval,
+      color: o.color,
+      coreColor: o.coreColor,
+      shoot: o.shoot,
+      deathBurst: o.deathBurst,
+      destructible: o.destructible,
+    });
+  }
+  return arr;
+}
+
+// Rikudōken "Ichinen Mugyōkō" (六道剣「一念無量劫」, PCCB Sub19-22, non-spell):
+// a rotating 29-bullet ring (Sub20: each ring offset 5.6° from the last,
+// expanding radially) plus a 6-bullet aimed fan (Sub21, 22.5° spread) and a
+// 2-bullet aimed stream (Sub22, 30° spread), the aim re-randomized between
+// bursts (ins_52/ins_54). Simplified to a rotating ring + two aimed streams.
+const YUYUKO_NONSPELL = [
+  // Rotating 29-bullet ring (Sub20): the signature expanding spiral.
+  { t: 0, type: 'ring', count: 29, speed: 2.0, rotStep: 0.098, interval: 0.35,
+    color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', r: 5 },
+  // 6-bullet aimed fan (Sub21, 22.5° spread) — 5 per the house rule.
+  { t: 0.3, type: 'aimed', count: 5, spread: 0.39, speed: 3.5, angleStep: 0.42,
+    interval: 0.3, color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', r: 4 },
+  // 2-bullet aimed stream (Sub22, 30° spread) — 3 per the house rule.
+  { t: 0.6, type: 'aimed', count: 3, spread: 0.52, speed: 3.5, angleStep: -0.42,
+    interval: 0.3, color: '#9966ff', coreColor: '#e0d0ff', shape: 'diamond', r: 4 },
+];
+
+// Bō "Bōgakyō" (亡郷「亡我郷」, PCCB Sub43-47): the curved-bullet card. Four
+// bullet groups (ins_79) each with a different angle/speed acceleration, fired
+// as rotating 8-10-way fans (30° spread, speed 3.7-4.2) whose whole fan rotates
+// (angle += 2.25°/fire). `turn` banks each bullet (the card's signature curve).
+// NOTE: turn must be GENTLE (0.004, not 0.02) — a 0.02 bank at speed 3.8 is a
+// 190px-radius circle, so each bullet curves ~105° before reaching the player's
+// y-level and sweeps off to the side (the card then reads "close 224px /
+// moved 0px" — a non-threat). 0.004 keeps a visible curve while the bullets
+// still reach the player. A straight aimed layer guarantees the threat.
+const YUYUKO_BO_GA_KYO = [
+  // Rotating curved fan (Sub44-47): 9 curved bullets, gentle bank.
+  { t: 0, type: 'fan', count: 9, spread: 0.52, speed: 3.8, turn: 0.004,
+    angleStep: 0.039, interval: 0.3,
+    color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', r: 5 },
+  // Counter-rotating curved fan (the second group).
+  { t: 0.15, type: 'fan', count: 11, spread: 0.52, speed: 3.8, turn: -0.004,
+    angleStep: -0.039, interval: 0.3,
+    color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', r: 4 },
+  // Straight aimed stream (the card's "aimed" layer — guarantees a real
+  // threat, since the curved fans drift off the aim line).
+  { t: 0.3, type: 'aimed', count: 3, spread: 0.3, speed: 3.5,
+    interval: 0.4, color: '#9966ff', coreColor: '#e0d0ff', shape: 'diamond', r: 4 },
+  // A slower straight ring for depth (the outer layer).
+  { t: 0.5, type: 'ring', count: 18, speed: 2.2, rotStep: 0.06,
+    interval: 0.6, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', r: 5 },
+];
+
+// Bōbu "Seishasha Hitsumetsu no Kotowari" (亡舞「生者必滅の理」, PCCB Sub50-51):
+// the accelerating-bullet card. Rings and aimed volleys that build in speed
+// (the ins_79 groups accelerate the bullets; here approximated with speedStep,
+// each volley faster than the last) — the "inevitable death of the living"
+// build.
+const YUYUKO_SEISHASHA = [
+  // Accelerating aimed volley (Sub51, speed 3.4/3.7).
+  { t: 0, type: 'aimed', count: 5, spread: 0.52, speed: 2.2, speedStep: 0.05,
+    interval: 0.4, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', r: 5 },
+  // Slow expanding ring (Sub51, ins_67 count 4, speed 1.4) that builds.
+  { t: 0.2, type: 'ring', count: 14, speed: 1.4, speedStep: 0.04, rotStep: 0.08,
+    interval: 0.5, color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', r: 4 },
+  // Counter-rotating ring (the card's second layer).
+  { t: 0.4, type: 'ring', count: 16, speed: 1.8, speedStep: 0.05, rotStep: -0.08,
+    interval: 0.55, color: '#9966ff', coreColor: '#e0d0ff', shape: 'diamond', r: 4 },
+];
+
+// Karei "Ghost Butterfly" (華霊「ゴーストバタフライ」, PCCB Sub52-54): the
+// butterfly card. A butterfly hovers near Yuyuko and fires curved 8-bullet
+// rings/spreads (Sub53: two 8-rings at speed 0.8/1.46 curving ±4.5°/fire, two
+// narrow 8-spreads at 11.25° and speed 2.4/3.2 curving ±5.1°/fire), plus a
+// periodic 7-bullet ring that re-fires every second with its base angle
+// advancing 1.5°/s (Sub54, speed 2.0 N / 2.5 L). Simplified to 6 orbiting
+// butterflies (dolls) that each shed a ring AND an aimed fan every 0.7s
+// (the real card's narrow 11.25° 8-spreads are effectively aimed lines —
+// the card's main threat — flattened to a 3-way aimed fan), plus the Sub54
+// rotating 7-ring from the boss.
+// NOTE: a blind ring alone made this card a non-threat (a stationary player
+// sits between the 8 ring spokes and takes nothing — "close 86px, moved 0px").
+// The aimed fan is what forces movement.
+const YUYUKO_GHOST_BUTTERFLY = [
+  ...yuyukoButterflyEmits(6, {
+    orbitRadius: 90, orbitSpeed: 0.02,   // 6 butterflies circle Yuyuko
+    speed: 0, interval: 0.7,
+    color: '#88ccff', coreColor: '#e8f4ff',
+    // The orbiting butterflies are the spell's emitters (PCCB Sub53 entities),
+    // not hazards: invulnerable, so the player's fire can't empty the card by
+    // shooting them down (the bullets they fire stay shootable).
+    destructible: false,
+    // Each butterfly sheds TWO patterns per tick (the doll emitter accepts an
+    // array of shoot emits): the "butterfly transforms into bullets" ring
+    // (Sub53's 8-ring) and an aimed 3-fan (Sub53's narrow 8-spreads).
+    shoot: [
+      { type: 'ring', count: 8, speed: 1.6,
+        color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', r: 4 },
+      { type: 'aimed', count: 3, spread: 0.25, speed: 2.2,
+        color: '#88ccff', coreColor: '#e8f4ff', shape: 'diamond', r: 4 },
+    ],
+  }),
+  // The periodic 7-bullet rotating ring (Sub54: re-fires every 1s, base angle
+  // +1.5°/s, speed 2.0 N / 2.5 L — the card's slow sweeping layer).
+  { t: 0.3, type: 'ring', count: 7, speed: 2.0, rotStep: 0.026, interval: 0.8,
+    color: '#88ccff', coreColor: '#e8f4ff', shape: 'petal', r: 4 },
+];
+
+// Hankondō (「反魂蝶」, PCCB Sub62-68, final spell): the Butterfly
+// Reincarnation survival card. Butterflies circle Yuyuko and burst into rings,
+// while a rotating laser (Sub67/68, the "butterfly transforms into a laser"
+// mechanic) sweeps the screen and cherry-blossom petals drift (the
+// "reincarnation" theme). The butterflies shed the same ring + aimed-fan pair
+// as Ghost Butterfly (faster, 10-wide rings) so the Lunatic finale keeps the
+// aimed threat.
+const YUYUKO_HANKONDO = [
+  // Butterflies (Sub62): orbiting dolls that burst into rings + aimed fans.
+  ...yuyukoButterflyEmits(6, {
+    orbitRadius: 100, orbitSpeed: 0.025,
+    speed: 0, interval: 0.6,
+    color: '#88ccff', coreColor: '#e8f4ff',
+    destructible: false,
+    shoot: [
+      { type: 'ring', count: 10, speed: 1.8,
+        color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', r: 4 },
+      { type: 'aimed', count: 3, spread: 0.25, speed: 2.4,
+        color: '#88ccff', coreColor: '#e8f4ff', shape: 'diamond', r: 4 },
+    ],
+  }),
+  // The butterfly-laser (Sub67/68): a rotating laser that sweeps the screen.
+  { t: 0.5, type: 'laser', count: 1, speed: 2.0, laserLen: 80, sweep: 0.6,
+    warn: 0.4, life: 90, interval: 0.5,
+    color: '#6688ff', coreColor: '#d0dcff', shape: 'petal' },
+  // Cherry-blossom ring (the "reincarnation" petals).
+  { t: 0.3, type: 'ring', count: 20, speed: 1.6, rotStep: 0.1, interval: 0.8,
+    color: '#ff99cc', coreColor: '#ffd0e8', shape: 'petal', r: 5 },
 ];
 
 const BOSSES = {
@@ -737,86 +1739,112 @@ const BOSSES = {
   },
 
 
-  // ── Momiji — Knight (value 3). Shield-based, simple but fast. ──
-  momiji: {
-    name: 'Momiji',
-    color: '#77aaff',
-    bgTop: '#0a1020',
-    bgBottom: '#04060c',
+  // ── Hina Kagiyama — Knight (value 3). Misfortune-doll (nagashi-bina) ──
+  // themes: streams of bad luck, a wheel of misfortune, and a flowing
+  // barrage. Real MoF (TH10) stage-2 final-boss patterns — see the
+  // HINA_* constants above for the full decode.
+  hina: {
+    name: 'Hina',
+    color: '#ff8899',
+    bgTop: '#1a0a10',
+    bgBottom: '#08030a',
     move: 'slide',
     holdDur: 3, slideDur: 0.6, slideDist: 120,
     phases: {
       normal: [
         {
-          name: 'Non-spell',
+          // Non-spell (MoF Boss1/Boss1At): a continuous 8-way aimed stream
+          // of misfortune plus five dense 32-shot aimed bursts in a row.
+          // Dark misfortune red.
+          name: 'Misfortune (non-spell)',
           duration: 16,
-          hp: 100,
-          emits: [
-            { t: 0, type: 'aimed', count: 4, spread: 0.25, speed: 3.2, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.4 },
-            { t: 0.3, type: 'ring', count: 12, speed: 2, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', interval: 1.4 },
-          ],
+          hp: 110,
+          bgTop: '#1a0a10',
+          bgBottom: '#08030a',
+          emits: HINA_NONSPELL,
         },
         {
-          name: 'Shield Charge',
-          duration: 17,
-          hp: 120,
-          emits: [
-            { t: 0, type: 'aimed', count: 6, spread: 0.5, speed: 3.4, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.35 },
-            { t: 0.2, type: 'ring', count: 16, speed: 2.2, color: '#77aaff', coreColor: '#d8e8ff', shape: 'circle', interval: 1.1 },
-          ],
-        },
-        {
-          name: 'Shield Wall',
+          // Broken Amulet (疵符「ブロークンアミュレット」, MoF card 1, E/N):
+          // a ring of eight side-shooters around the doll, each raining a
+          // slow 5-way player-aimed fan. Pale broken-ward pink.
+          name: 'Broken Amulet',
           duration: 18,
           hp: 130,
-          emits: [
-            { t: 0, type: 'ring', count: 20, speed: 1.9, color: '#5588ff', coreColor: '#d0e0ff', shape: 'diamond', rotSpeed: 0.1, interval: 1.2 },
-            { t: 0.4, type: 'aimed', count: 3, spread: 0.3, speed: 2.8, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.5 },
-          ],
+          bgTop: '#1c0a12',
+          bgBottom: '#08030a',
+          emits: HINA_BROKEN_AMULET,
+        },
+        {
+          // Misfortune's Wheel (悪霊「ミスフォーチュンズホイール」, MoF card
+          // 2, E/N): two counter-rotating rings of large curving bullets
+          // (the wheel of misfortune) with a slow aimed hub. Golden wheel.
+          name: 'Misfortune\'s Wheel',
+          duration: 18,
+          hp: 140,
+          bgTop: '#180e04',
+          bgBottom: '#080402',
+          emits: HINA_WHEEL,
+        },
+        {
+          // Pain Flow (創符「ペインフロー」, MoF card 3, E/N): fast- and
+          // counter-rotating 5-way fans plus four cardinal side-shooters —
+          // a flowing, layered barrage. Violet flow.
+          name: 'Pain Flow',
+          duration: 18,
+          hp: 150,
+          bgTop: '#140a1c',
+          bgBottom: '#060308',
+          emits: HINA_PAIN_FLOW,
         },
       ],
       lunatic: [
         {
-          name: 'Non-spell',
+          // Non-spell (Lunatic): same card as Normal, scaled up (faster
+          // streams, denser bursts).
+          name: 'Misfortune (non-spell)',
           duration: 16,
-          hp: 110,
-          emits: [
-            { t: 0, type: 'aimed', count: 5, spread: 0.28, speed: 3.3, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.35 },
-            { t: 0.3, type: 'ring', count: 16, speed: 2.1, color: '#5588ff', coreColor: '#d0e0ff', shape: 'circle', interval: 1.2 },
-          ],
+          hp: 120,
+          bgTop: '#1a0a10',
+          bgBottom: '#08030a',
+          emits: HINA_NONSPELL,
         },
         {
-          name: 'Shield Charge',
-          duration: 17,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'aimed', count: 8, spread: 0.55, speed: 3.5, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.3 },
-            { t: 0.2, type: 'ring', count: 20, speed: 2.3, color: '#77aaff', coreColor: '#d8e8ff', shape: 'circle', interval: 0.95 },
-          ],
-        },
-        {
-          name: 'Shield Wall',
+          // Broken Charm of Protection (疵痕「壊されたお守り」, MoF card 1,
+          // H/L): the Broken Amulet pattern at Lunatic scale.
+          name: 'Broken Charm of Protection',
           duration: 18,
           hp: 140,
-          emits: [
-            { t: 0, type: 'ring', count: 24, speed: 2, color: '#5588ff', coreColor: '#d0e0ff', shape: 'diamond', rotSpeed: 0.12, interval: 1.05 },
-            { t: 0.4, type: 'aimed', count: 4, spread: 0.32, speed: 2.9, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.45 },
-          ],
+          bgTop: '#1c0a12',
+          bgBottom: '#08030a',
+          emits: HINA_BROKEN_AMULET,
         },
         {
-          name: 'Shield Barrage',
+          // Old Lady Ohgane's Fire (悲運「大鐘婆の火」, MoF card 2, H/L):
+          // the Misfortune's Wheel pattern at Lunatic scale.
+          name: 'Old Lady Ohgane\'s Fire',
           duration: 18,
           hp: 150,
-          emits: [
-            { t: 0, type: 'aimed', count: 6, spread: 0.4, speed: 3.5, color: '#aaccff', coreColor: '#e8f0ff', shape: 'diamond', interval: 0.3 },
-            { t: 0.25, type: 'fan', count: 7, spread: 1.2, speed: 2.6, color: '#77aaff', coreColor: '#d8e8ff', shape: 'circle', interval: 0.8 },
-          ],
+          bgTop: '#180e04',
+          bgBottom: '#080402',
+          emits: HINA_WHEEL,
+        },
+        {
+          // Exiled Doll (創符「流刑人形」, MoF card 3, H/L): the Pain Flow
+          // pattern at Lunatic scale.
+          name: 'Exiled Doll',
+          duration: 18,
+          hp: 160,
+          bgTop: '#140a1c',
+          bgBottom: '#060308',
+          emits: HINA_PAIN_FLOW,
         },
       ],
     },
   },
 
   // ── Patchouli — Bishop (value 3). Elemental magic. ──
+  // Real EoSD (Touhou 6) stage-4 elemental cards, mined from ecldata4 (see
+  // the PATCHOULI_* constants above for the disasm provenance).
   patchouli: {
     name: 'Patchouli',
     color: '#cc88ff',
@@ -825,71 +1853,17 @@ const BOSSES = {
     move: 'still',
     phases: {
       normal: [
-        {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 100,
-          emits: [
-            { t: 0, type: 'aimed', count: 4, spread: 0.4, speed: 2.8, color: '#ff8833', coreColor: '#ffe0c0', shape: 'circle', interval: 0.45 },
-            { t: 0.3, type: 'aimed', count: 2, spread: 0.6, speed: 2.2, color: '#ff5533', coreColor: '#ffd0c0', shape: 'circle', interval: 0.7 },
-          ],
-        },
-        {
-          name: 'Agni Shine',
-          duration: 17,
-          hp: 120,
-          emits: [
-            { t: 0, type: 'aimed', count: 7, spread: 0.7, speed: 3.2, color: '#ff6622', coreColor: '#ffe8d0', shape: 'star', interval: 0.35 },
-            { t: 0.4, type: 'ring', count: 14, speed: 2, color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', interval: 1.2 },
-          ],
-        },
-        {
-          name: 'Princess Undine',
-          duration: 18,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'ring', count: 18, speed: 2.2, color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', interval: 1 },
-            { t: 0.3, type: 'aimed', count: 5, spread: 0.3, speed: 3.5, color: '#66ccff', coreColor: '#e0f4ff', shape: 'diamond', interval: 0.4 },
-          ],
-        },
+        { name: 'Non-spell', duration: 16, hp: 100, emits: PATCHOULI_NONSPELL },
+        { name: 'Fire Sign "Agni Shine"', duration: 17, hp: 120, emits: PATCHOULI_AGNI_SHINE },
+        { name: 'Water Sign "Princess Undine"', duration: 18, hp: 130, emits: PATCHOULI_UNDINE },
+        { name: 'Metal Sign "Metal Fatigue"', duration: 18, hp: 140, emits: PATCHOULI_METAL_FATIGUE },
       ],
       lunatic: [
-        {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 110,
-          emits: [
-            { t: 0, type: 'aimed', count: 5, spread: 0.45, speed: 2.9, color: '#ff8833', coreColor: '#ffe0c0', shape: 'circle', interval: 0.4 },
-            { t: 0.3, type: 'aimed', count: 3, spread: 0.65, speed: 2.3, color: '#ff5533', coreColor: '#ffd0c0', shape: 'circle', interval: 0.6 },
-          ],
-        },
-        {
-          name: 'Agni Shine',
-          duration: 17,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'aimed', count: 9, spread: 0.75, speed: 3.3, color: '#ff6622', coreColor: '#ffe8d0', shape: 'star', interval: 0.3 },
-            { t: 0.4, type: 'ring', count: 18, speed: 2.1, color: '#ff8844', coreColor: '#ffe8d0', shape: 'circle', interval: 1 },
-          ],
-        },
-        {
-          name: 'Princess Undine',
-          duration: 18,
-          hp: 140,
-          emits: [
-            { t: 0, type: 'ring', count: 22, speed: 2.3, color: '#44aaff', coreColor: '#d0ecff', shape: 'circle', interval: 0.85 },
-            { t: 0.3, type: 'aimed', count: 6, spread: 0.32, speed: 3.6, color: '#66ccff', coreColor: '#e0f4ff', shape: 'diamond', interval: 0.35 },
-          ],
-        },
-        {
-          name: 'Metal Fatigue',
-          duration: 18,
-          hp: 150,
-          emits: [
-            { t: 0, type: 'aimed', count: 6, spread: 0.5, speed: 3, color: '#ccccdd', coreColor: '#ffffff', shape: 'diamond', interval: 0.4 },
-            { t: 0.5, type: 'spiral', arms: 3, rotSpeed: 0.3, speed: 2.4, color: '#aabbcc', coreColor: '#eef0ff', shape: 'diamond', interval: 0.18 },
-          ],
-        },
+        { name: 'Non-spell', duration: 16, hp: 110, emits: PATCHOULI_NONSPELL },
+        { name: 'Fire Sign "Agni Shine Advanced"', duration: 17, hp: 130, emits: PATCHOULI_AGNI_ADV },
+        { name: 'Water Sign "Berry in Lake"', duration: 18, hp: 140, emits: PATCHOULI_BERRY },
+        { name: 'Metal Sign "Silver Dragon"', duration: 18, hp: 150, emits: PATCHOULI_SILVER_DRAGON },
+        { name: 'Fire Sign "Agni Radiance"', duration: 18, hp: 160, emits: PATCHOULI_AGNI_RADIANCE },
       ],
     },
   },
@@ -902,73 +1876,26 @@ const BOSSES = {
     bgBottom: '#0a0410',
     move: 'slide',
     holdDur: 3, slideDur: 0.6, slideDist: 130,
+    // Alice's Lunatic spell cards are tuned harder than the global default.
+    // The doll cards (French/Dutch/Bunraku) put their bullets in the doll's
+    // nested `shoot`, which the global scale never reached — so they barely
+    // changed on Lunatic and felt too easy. `nestedDensity` densifies those
+    // bullet patterns (more bullets at once); `nestedSpeed: 1.0` keeps them at
+    // Normal speed (faster bullets are easier to dodge, not harder). Bunraku is
+    // already on the hard side (its dolls fire to the bottom), so it's excluded
+    // via `noLunaticScale` and tuned by its own shoot-budget cap instead.
+    lunaticScale: { nestedDensity: 1.5, nestedSpeed: 1.0 },
     phases: {
       normal: [
-        {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 100,
-          emits: [
-            { t: 0, type: 'aimed', count: 5, spread: 0.5, speed: 2.8, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'petal', interval: 0.4 },
-            { t: 0.3, type: 'ring', count: 12, speed: 1.9, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'circle', interval: 1.3 },
-          ],
-        },
-        {
-          name: 'Thousand Spear Dolls',
-          duration: 17,
-          hp: 120,
-          emits: [
-            { t: 0, type: 'ring', count: 20, speed: 2.4, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'diamond', interval: 0.9 },
-            { t: 0.3, type: 'aimed', count: 4, spread: 0.3, speed: 3, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'star', interval: 0.5 },
-          ],
-        },
-        {
-          name: 'Dolls of War',
-          duration: 18,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'spiral', arms: 4, rotSpeed: 0.35, speed: 2.5, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'petal', interval: 0.14 },
-            { t: 0.4, type: 'ring', count: 16, speed: 2, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'circle', interval: 1.1 },
-          ],
-        },
+        { name: 'Non-spell', duration: 16, hp: 100, emits: ALICE_NONSPELL },
+        { name: 'Puppeteer Sign "Maiden\'s Bunraku"', duration: 20, hp: 130, emits: ALICE_BUNRAKU },
+        { name: 'Soufu "French Dolls"', duration: 22, hp: 140, emits: ALICE_FRENCH },
       ],
       lunatic: [
-        {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 110,
-          emits: [
-            { t: 0, type: 'aimed', count: 6, spread: 0.55, speed: 2.9, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'petal', interval: 0.35 },
-            { t: 0.3, type: 'ring', count: 16, speed: 2, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'circle', interval: 1.1 },
-          ],
-        },
-        {
-          name: 'Thousand Spear Dolls',
-          duration: 17,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'ring', count: 26, speed: 2.5, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'diamond', interval: 0.75 },
-            { t: 0.3, type: 'aimed', count: 5, spread: 0.32, speed: 3.1, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'star', interval: 0.45 },
-          ],
-        },
-        {
-          name: 'Dolls of War',
-          duration: 18,
-          hp: 140,
-          emits: [
-            { t: 0, type: 'spiral', arms: 5, rotSpeed: 0.38, speed: 2.6, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'petal', interval: 0.12 },
-            { t: 0.4, type: 'ring', count: 20, speed: 2.1, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'circle', interval: 0.95 },
-          ],
-        },
-        {
-          name: 'Explosive-laden Dolls',
-          duration: 18,
-          hp: 150,
-          emits: [
-            { t: 0, type: 'fan', count: 9, spread: 1.8, speed: 2.8, color: '#ff99cc', coreColor: '#ffe0f0', shape: 'petal', interval: 0.6, angle: Math.PI * 0.5 },
-            { t: 0.3, type: 'aimed', count: 5, spread: 0.4, speed: 3.2, color: '#cc66ff', coreColor: '#f0d0ff', shape: 'star', interval: 0.4 },
-          ],
-        },
+        { name: 'Non-spell', duration: 16, hp: 110, emits: ALICE_NONSPELL },
+        { name: 'Puppeteer Sign "Maiden\'s Bunraku"', duration: 20, hp: 130, emits: ALICE_BUNRAKU },
+        { name: 'Soufu "French Dolls"', duration: 22, hp: 140, emits: ALICE_FRENCH },
+        { name: 'Soufu "Dutch Dolls"', duration: 22, hp: 150, emits: ALICE_DUTCH },
       ],
     },
   },
@@ -987,37 +1914,25 @@ const BOSSES = {
           name: 'Non-spell',
           duration: 16,
           hp: 110,
-          emits: [
-            { t: 0, type: 'fan', count: 5, spread: 0.8, speed: 3, color: '#ff3344', coreColor: '#ffb0b8', shape: 'circle', interval: 0.5 },
-            { t: 0.4, type: 'ring', count: 14, speed: 2.2, color: '#ff5566', coreColor: '#ffc0c8', shape: 'diamond', interval: 1.2 },
-          ],
+          emits: REMILIA_NONSPELL,
         },
         {
-          name: 'Scarlet Shoot',
-          duration: 17,
+          name: 'Heaven\'s Punishment "Star of David"',
+          duration: 20,
           hp: 130,
-          emits: [
-            { t: 0, type: 'fan', count: 5, spread: 0.6, speed: 3.8, color: '#ff2233', coreColor: '#ffb0b8', shape: 'circle', interval: 0.4, r: 6 },
-            { t: 0.3, type: 'fan', count: 5, spread: 0.6, speed: 3.8, color: '#ff2233', coreColor: '#ffb0b8', shape: 'circle', interval: 0.4, r: 6, angle: Math.PI * 0.5 },
-          ],
+          emits: REMILIA_STAR_OF_DAVID,
         },
         {
-          name: 'Scarlet Netherworld',
-          duration: 18,
+          name: 'Nether Sign "Scarlet Netherworld"',
+          duration: 22,
           hp: 140,
-          emits: [
-            { t: 0, type: 'ring', count: 20, speed: 2.4, color: '#ff3344', coreColor: '#ffb0b8', shape: 'diamond', interval: 0.9 },
-            { t: 0.4, type: 'aimed', count: 4, spread: 0.3, speed: 3.2, color: '#ff5566', coreColor: '#ffc0c8', shape: 'circle', interval: 0.5 },
-          ],
+          emits: REMILIA_NETHERWORLD,
         },
         {
-          name: 'Spear the Gungnir',
-          duration: 18,
+          name: 'Scarlet Sign "Scarlet Shoot"',
+          duration: 20,
           hp: 150,
-          emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.5, color: '#ff2233', coreColor: '#ffb0b8', shape: 'diamond', interval: 0.5, laserLen: 10 },
-            { t: 0.3, type: 'ring', count: 16, speed: 2.2, color: '#ff5566', coreColor: '#ffc0c8', shape: 'circle', interval: 1 },
-          ],
+          emits: REMILIA_SCARLET_SHOOT,
         },
       ],
       lunatic: [
@@ -1025,52 +1940,38 @@ const BOSSES = {
           name: 'Non-spell',
           duration: 16,
           hp: 120,
-          emits: [
-            { t: 0, type: 'fan', count: 6, spread: 0.85, speed: 3.1, color: '#ff3344', coreColor: '#ffb0b8', shape: 'circle', interval: 0.45 },
-            { t: 0.4, type: 'ring', count: 18, speed: 2.3, color: '#ff5566', coreColor: '#ffc0c8', shape: 'diamond', interval: 1 },
-          ],
+          emits: REMILIA_NONSPELL,
         },
         {
-          name: 'Scarlet Shoot',
-          duration: 17,
+          // Real HL slot-1 card (Sub31); Star of David is the EN version of
+          // this slot and stays in the Normal move-set only.
+          name: 'Divine Punishment "Young Demon Lord"',
+          duration: 22,
           hp: 140,
-          emits: [
-            { t: 0, type: 'fan', count: 6, spread: 0.65, speed: 3.9, color: '#ff2233', coreColor: '#ffb0b8', shape: 'circle', interval: 0.35, r: 6 },
-            { t: 0.3, type: 'fan', count: 6, spread: 0.65, speed: 3.9, color: '#ff2233', coreColor: '#ffb0b8', shape: 'circle', interval: 0.35, r: 6, angle: Math.PI * 0.5 },
-          ],
+          emits: REMILIA_DEMON_LORD,
         },
         {
-          name: 'Scarlet Netherworld',
-          duration: 18,
-          hp: 150,
-          emits: [
-            { t: 0, type: 'ring', count: 26, speed: 2.5, color: '#ff3344', coreColor: '#ffb0b8', shape: 'diamond', interval: 0.75 },
-            { t: 0.4, type: 'aimed', count: 5, spread: 0.32, speed: 3.3, color: '#ff5566', coreColor: '#ffc0c8', shape: 'circle', interval: 0.45 },
-          ],
+          // Real slot-2 card; the EN banner is "Scarlet Netherworld" (Sub32),
+          // the HL banner "Mountain of a Thousand Needles" (Sub33). We port
+          // the Sub32 pattern and keep the EN name for both difficulties.
+          name: 'Nether Sign "Scarlet Netherworld"',
+          duration: 22,
+          hp: 155,
+          emits: REMILIA_NETHERWORLD,
         },
         {
-          name: 'Spear the Gungnir',
-          duration: 18,
-          hp: 160,
-          emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.6, color: '#ff2233', coreColor: '#ffb0b8', shape: 'diamond', interval: 0.4, laserLen: 12 },
-            { t: 0.3, type: 'ring', count: 20, speed: 2.3, color: '#ff5566', coreColor: '#ffc0c8', shape: 'circle', interval: 0.85 },
-          ],
-        },
-        {
-          name: 'Star of David',
-          duration: 18,
-          hp: 170,
-          emits: [
-            { t: 0, type: 'laser', count: 1, speed: 3.5, color: '#ff2233', coreColor: '#ffb0b8', shape: 'diamond', interval: 0.45, laserLen: 10 },
-            { t: 0.2, type: 'ring', count: 18, speed: 2.6, color: '#4488ff', coreColor: '#d0e0ff', shape: 'star', rotSpeed: 0.2, interval: 0.7 },
-          ],
+          name: '"Scarlet Gensokyo"',
+          duration: 24,
+          hp: 165,
+          emits: REMILIA_SCARLET_GENSO,
         },
       ],
     },
   },
 
   // ── Yuyuko — Rook (value 5). Death / butterfly / cherry-blossom. ──
+  // Real PCCB (Touhou 7) stage-6 cards, mined from ecldata6 (see the
+  // YUYUKO_* constants above for the disasm provenance).
   yuyuko: {
     name: 'Yuyuko',
     color: '#6688ff',
@@ -1079,93 +1980,17 @@ const BOSSES = {
     move: 'still',
     phases: {
       normal: [
-        {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 110,
-          emits: [
-            { t: 0, type: 'ring', count: 16, speed: 2, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', rotSpeed: 0.1, interval: 1.1 },
-            { t: 0.4, type: 'aimed', count: 3, spread: 0.3, speed: 2.6, color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', interval: 0.55 },
-          ],
-        },
-        {
-          name: 'Dance of the Dead Butterflies',
-          duration: 17,
-          hp: 130,
-          emits: [
-            { t: 0, type: 'ring', count: 18, speed: 2.2, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', rotSpeed: 0.15, interval: 0.9, angle: Math.PI * 0.3 },
-            { t: 0.4, type: 'ring', count: 18, speed: 2.2, color: '#88aaff', coreColor: '#e0e8ff', shape: 'petal', rotSpeed: -0.15, interval: 0.9, angle: Math.PI * 0.7 },
-          ],
-        },
-        {
-          name: 'Ghost Spot',
-          duration: 18,
-          hp: 140,
-          emits: [
-            { t: 0, type: 'spiral', arms: 2, rotSpeed: 0.3, speed: 2.4, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', interval: 0.15 },
-            { t: 0.5, type: 'aimed', count: 5, spread: 0.5, speed: 3, color: '#ff6688', coreColor: '#ffd0d8', shape: 'petal', interval: 0.5 },
-            { t: 0.3, type: 'ring', count: 12, speed: 1.8, color: '#9966ff', coreColor: '#e0d0ff', shape: 'circle', interval: 1.3 },
-          ],
-        },
-        {
-          name: 'Eternal Sleep in Dreamland',
-          duration: 18,
-          hp: 150,
-          emits: [
-            { t: 0, type: 'spiral', arms: 4, rotSpeed: 0.35, speed: 2.6, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', interval: 0.12 },
-            { t: 0.4, type: 'ring', count: 20, speed: 2, color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', interval: 1 },
-          ],
-        },
+        { name: 'Non-spell', duration: 16, hp: 110, emits: YUYUKO_NONSPELL },
+        { name: 'Bō "Bōgakyō"', duration: 18, hp: 130, emits: YUYUKO_BO_GA_KYO },
+        { name: 'Bōbu "Seishasha Hitsumetsu no Kotowari"', duration: 18, hp: 140, emits: YUYUKO_SEISHASHA },
+        { name: 'Karei "Ghost Butterfly"', duration: 18, hp: 150, emits: YUYUKO_GHOST_BUTTERFLY },
       ],
       lunatic: [
-        {
-          name: 'Non-spell',
-          duration: 16,
-          hp: 120,
-          emits: [
-            { t: 0, type: 'ring', count: 20, speed: 2.1, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', rotSpeed: 0.12, interval: 0.95 },
-            { t: 0.4, type: 'aimed', count: 4, spread: 0.32, speed: 2.7, color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', interval: 0.5 },
-          ],
-        },
-        {
-          name: 'Dance of the Dead Butterflies',
-          duration: 17,
-          hp: 140,
-          emits: [
-            { t: 0, type: 'ring', count: 22, speed: 2.3, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', rotSpeed: 0.16, interval: 0.75, angle: Math.PI * 0.3 },
-            { t: 0.4, type: 'ring', count: 22, speed: 2.3, color: '#88aaff', coreColor: '#e0e8ff', shape: 'petal', rotSpeed: -0.16, interval: 0.75, angle: Math.PI * 0.7 },
-          ],
-        },
-        {
-          name: 'Ghost Spot',
-          duration: 18,
-          hp: 150,
-          emits: [
-            { t: 0, type: 'spiral', arms: 3, rotSpeed: 0.32, speed: 2.5, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', interval: 0.13 },
-            { t: 0.5, type: 'aimed', count: 6, spread: 0.55, speed: 3.1, color: '#ff6688', coreColor: '#ffd0d8', shape: 'petal', interval: 0.45 },
-            { t: 0.3, type: 'ring', count: 16, speed: 1.9, color: '#9966ff', coreColor: '#e0d0ff', shape: 'circle', interval: 1.1 },
-          ],
-        },
-        {
-          name: 'Eternal Sleep in Dreamland',
-          duration: 18,
-          hp: 160,
-          emits: [
-            { t: 0, type: 'spiral', arms: 5, rotSpeed: 0.38, speed: 2.7, color: '#6688ff', coreColor: '#d0dcff', shape: 'petal', interval: 0.1 },
-            { t: 0.4, type: 'ring', count: 24, speed: 2.1, color: '#88aaff', coreColor: '#e0e8ff', shape: 'circle', interval: 0.85 },
-          ],
-        },
-        {
-          name: 'Ageless Dream',
-          duration: 18,
-          hp: 170,
-          emits: [
-            // life: missed aimed bullets orbit the player and never leave
-            // the screen, so they need a finite lifetime (see header note).
-            { t: 0, type: 'aimed', count: 4, speed: 2.8, color: '#9966ff', coreColor: '#e0d0ff', shape: 'petal', turn: 0.04, interval: 0.7, life: 600 },
-            { t: 0.3, type: 'spiral', arms: 3, rotSpeed: 0.3, speed: 2.4, color: '#6688ff', coreColor: '#d0dcff', shape: 'circle', interval: 0.15 },
-          ],
-        },
+        { name: 'Non-spell', duration: 16, hp: 120, emits: YUYUKO_NONSPELL },
+        { name: 'Bō "Bōgakyō"', duration: 18, hp: 135, emits: YUYUKO_BO_GA_KYO },
+        { name: 'Bōbu "Seishasha Hitsumetsu no Kotowari"', duration: 18, hp: 145, emits: YUYUKO_SEISHASHA },
+        { name: 'Karei "Ghost Butterfly"', duration: 18, hp: 155, emits: YUYUKO_GHOST_BUTTERFLY },
+        { name: 'Hankondō', duration: 20, hp: 160, emits: YUYUKO_HANKONDO },
       ],
     },
   },
@@ -1270,6 +2095,13 @@ const BOSSES = {
   },
 
   // ── Kaguya — King (value ∞), the final boss. Eternity + Impossible Requests. ──
+  // Bullet SIZE: TH08 resolves each shot's bullet from a `bulletType` index
+  // into BulletManager::bulletTypeSprites (th08's bullet ANM, NOT extracted),
+  // so exact pixel sizes can't be read from the disasm — the radii below are
+  // a best-effort match. The signature large bullets (Eternity Line r14,
+  // Cowrie Shell fan r10, Dragon's Neck rain r12) are already large; the
+  // counter-rotating rings (Penglai, Dragon's Neck) are r5; the rest stay
+  // small (r4) as in the original.
   kaguya: {
     name: 'Kaguya',
     color: '#ffdd88',
@@ -1329,8 +2161,8 @@ const BOSSES = {
               color: '#ffdd88', coreColor: '#fff8e0', shape: 'circle', interval: 1.0
             },
             // Rotating double rings (Sub54): speeds 1.1 / 1.5, counter-spin.
-            { t: 2, type: 'ring', count: 32, speed: 1.1, rotStep: 0.1, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.6 },
-            { t: 2.85, type: 'ring', count: 32, speed: 1.5, rotStep: -0.1, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.6 },
+            { t: 2, type: 'ring', count: 32, speed: 1.1, rotStep: 0.1, color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.6, r: 5 },
+            { t: 2.85, type: 'ring', count: 32, speed: 1.5, rotStep: -0.1, color: '#66aaff', coreColor: '#e0f0ff', shape: 'star', interval: 1.6, r: 5 },
           ],
         },
         {
@@ -1470,12 +2302,12 @@ const BOSSES = {
             {
               t: 0, type: 'ring', count: 16, speed: 2.2, rotStep: 0.06, aimRing: true,
               colors: ['#ff88bb', '#ffaa44', '#ffee44', '#66ff99', '#66aaff', '#bb88ff'], colorStep: 0.3,
-              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 1.1
+              color: '#bb88ff', coreColor: '#efe0ff', shape: 'circle', interval: 1.1, r: 5
             },
             {
               t: 0.55, type: 'ring', count: 16, speed: 2.2, rotStep: -0.06, rot: Math.PI / 16,
               colors: ['#66aaff', '#bb88ff', '#ff88bb', '#ffaa44', '#ffee44', '#66ff99'], colorStep: 0.3,
-              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 1.1
+              color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 1.1, r: 5
             },
             // First Moon / Rat Hour (Sub78/81): 8-way aimed circles aimed at
             // the player, over a 6-arm rotating spiral.
@@ -1823,19 +2655,19 @@ const BOSSES = {
             {
               t: 1.5, type: 'fan', count: 5, spread: 1.05, speed: 2.0,
               angleStep: 0.04, color: '#ffdd88', coreColor: '#fff8e0',
-              shape: 'circle', interval: 0.9
+              shape: 'circle', interval: 0.9, r: 4.5
             },
             // Counter-sweep (Sub23: second loop, opposite direction).
             {
               t: 2.5, type: 'fan', count: 5, spread: 1.05, speed: 2.0,
               angleStep: -0.04, angleOffset: Math.PI,
-              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'circle', interval: 0.9
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'circle', interval: 0.9, r: 4.5
             },
             // Golden ring burst (Sub23: ins_121 13,3/5/6 → escalating).
             {
               t: 4, type: 'ring', count: 20, speed: 2.0, rotStep: 0.05,
               colors: ['#ffdd88', '#ffaa44', '#ffee44'], colorStep: 0.3,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.0
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 1.0, r: 4.5
             },
           ],
         },
@@ -1847,29 +2679,29 @@ const BOSSES = {
             // Fire (Sub25): 2×10 ring, speed 2.0, refire 32f.
             {
               t: 0, type: 'ring', count: 10, speed: 2.0,
-              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.55
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.55, r: 5.5
             },
             // Water (Sub26): 6×11 aimed, speed 3.0→2.6, angle 0.26.
             {
               t: 0.8, type: 'aimed', count: 11, spread: 0.52, speed: 2.8,
               color: '#66aaff', coreColor: '#e0ecff',
-              shape: 'circle', interval: 1.1
+              shape: 'circle', interval: 1.1, r: 5.5
             },
             // Wood (Sub27): 10×10 spiral, speed 2.0→0.3, angle π→-π.
             {
               t: 1.6, type: 'spiral', arms: 20, rotSpeed: 0.3, speed: 1.8,
-              color: '#66ff99', coreColor: '#d8ffe8', shape: 'petal', interval: 0.24
+              color: '#66ff99', coreColor: '#d8ffe8', shape: 'petal', interval: 0.24, r: 5.5
             },
             // Metal (Sub28): 16-ray, speed 4.0→1.0, angle from var.
             {
               t: 2.4, type: 'ring', count: 16, speed: 2.6, rotStep: 0.06,
-              color: '#cccccc', coreColor: '#ffffff', shape: 'diamond', interval: 0.8
+              color: '#cccccc', coreColor: '#ffffff', shape: 'diamond', interval: 0.8, r: 5.5
             },
             // Earth (Sub29): 13-bullet aimed, speed 2.4→1.0, angle π/2.
             {
               t: 3.2, type: 'aimed', count: 13, spread: 0.8, speed: 2.2,
               angle: Math.PI / 2, angleOffset: 0.1,
-              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', interval: 1.0
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', interval: 1.0, r: 5.5
             },
           ],
         },
@@ -1899,9 +2731,11 @@ const BOSSES = {
               rotStep: 0.04, color: '#bb88ff', coreColor: '#eeccff',
               shape: 'star', interval: 1.2
             },
-            // Final wave (Sub68: ins_121 16,0/1 → two ring variants).
+            // Final wave (Sub68: ins_121 16,0/1 → two ring variants). The
+            // ins_121 helper sets its own sprite (not readable from the
+            // disasm); matched to the card's main sprite 2 size (r4).
             {
-              t: 6, type: 'ring', count: 48, speed: 2.8, rotStep: 0.03, r: 2.0,
+              t: 6, type: 'ring', count: 48, speed: 2.8, rotStep: 0.03, r: 4,
               colors: ['#ff88bb', '#bb88ff', '#eeeeff'], colorStep: 0.3,
               color: '#ff88bb', coreColor: '#ffccee', shape: 'circle', interval: 1.4
             },
@@ -1994,18 +2828,18 @@ const BOSSES = {
             {
               t: 1.2, type: 'fan', count: 7, spread: 1.2, speed: 2.3, centered: true,
               angleStep: 0.05, color: '#ffdd88', coreColor: '#fff8e0',
-              shape: 'circle', interval: 0.7
+              shape: 'circle', interval: 0.7, r: 4.5
             },
             {
               t: 2.2, type: 'fan', count: 7, spread: 1.2, speed: 2.3, centered: true,
               angleStep: -0.05, angleOffset: Math.PI,
-              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'circle', interval: 0.7
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'circle', interval: 0.7, r: 4.5
             },
             // L: denser golden ring.
             {
               t: 3.5, type: 'ring', count: 24, speed: 2.4, rotStep: 0.06,
               colors: ['#ffdd88', '#ffaa44', '#ffee44'], colorStep: 0.25,
-              color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 0.8
+              color: '#ffdd88', coreColor: '#fff8e0', shape: 'star', interval: 0.8, r: 4.5
             },
           ],
         },
@@ -2017,25 +2851,25 @@ const BOSSES = {
             // L: all five elements, denser.
             {
               t: 0, type: 'ring', count: 12, speed: 2.4,
-              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.45
+              color: '#ff5566', coreColor: '#ffd0d8', shape: 'circle', interval: 0.45, r: 5.5
             },
             {
               t: 0.6, type: 'aimed', count: 13, spread: 0.6, speed: 3.0, centered: true,
               angleOffset: 0.26, color: '#66aaff', coreColor: '#e0ecff',
-              shape: 'circle', interval: 0.9
+              shape: 'circle', interval: 0.9, r: 5.5
             },
             {
               t: 1.4, type: 'spiral', arms: 12, rotSpeed: 0.35, speed: 2.0,
-              color: '#66ff99', coreColor: '#d8ffe8', shape: 'petal', interval: 0.07
+              color: '#66ff99', coreColor: '#d8ffe8', shape: 'petal', interval: 0.07, r: 5.5
             },
             {
               t: 2.2, type: 'ring', count: 20, speed: 3.0, rotStep: 0.07,
-              color: '#cccccc', coreColor: '#ffffff', shape: 'diamond', interval: 0.7
+              color: '#cccccc', coreColor: '#ffffff', shape: 'diamond', interval: 0.7, r: 5.5
             },
             {
               t: 3.0, type: 'aimed', count: 15, spread: 0.9, speed: 2.5, centered: true,
               angle: Math.PI / 2, angleOffset: 0.1,
-              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', interval: 0.8
+              color: '#ffaa44', coreColor: '#ffe8c0', shape: 'rice', interval: 0.8, r: 5.5
             },
           ],
         },
@@ -2048,41 +2882,41 @@ const BOSSES = {
             // 9-bullet rings spawned at various positions.
             {
               t: 0, type: 'ring', count: 9, speed: 1.8, rotStep: 0.08,
-              color: '#ff88bb', coreColor: '#ffccee', shape: 'circle', interval: 0.8
+              color: '#ff88bb', coreColor: '#ffccee', shape: 'circle', interval: 0.8, r: 8
             },
             // Aimed 3-way fans (Sub44: ins_67 9×3, speed 3.6,
             // angle 1.57, offset -0.785): three 3-bullet fans at 45° offsets.
             {
               t: 0.5, type: 'aimed', count: 3, spread: 0.3, speed: 3.2,
               angle: Math.PI / 2, angleOffset: -0.785,
-              color: '#bb88ff', coreColor: '#eeccff', shape: 'star', interval: 0.6
+              color: '#bb88ff', coreColor: '#eeccff', shape: 'star', interval: 0.6, r: 8
             },
             {
               t: 0.8, type: 'aimed', count: 3, spread: 0.3, speed: 3.2,
               angle: Math.PI / 2, angleOffset: 0.785,
-              color: '#bb88ff', coreColor: '#eeccff', shape: 'star', interval: 0.6
+              color: '#bb88ff', coreColor: '#eeccff', shape: 'star', interval: 0.6, r: 8
             },
             {
               t: 1.1, type: 'aimed', count: 3, spread: 0.3, speed: 3.2,
               angle: Math.PI / 2,
-              color: '#bb88ff', coreColor: '#eeccff', shape: 'star', interval: 0.6
+              color: '#bb88ff', coreColor: '#eeccff', shape: 'star', interval: 0.6, r: 8
             },
             // Escalating trap rings (Sub44: ins_118 17,6 → color cycling).
             {
               t: 3, type: 'ring', count: 12, speed: 2.2, rotStep: 0.1,
               colors: ['#ff88bb', '#bb88ff', '#eeeeff'], colorStep: 0.3,
-              color: '#ff88bb', coreColor: '#ffccee', shape: 'circle', interval: 0.7
+              color: '#ff88bb', coreColor: '#ffccee', shape: 'circle', interval: 0.7, r: 8
             },
             // Corner fans (Sub44: second half, 45° diagonal fans).
             {
               t: 5, type: 'fan', count: 5, spread: 0.9, angle: 0.785, speed: 2.8,
               angleStep: 0.06, color: '#ff88bb', coreColor: '#ffccee',
-              shape: 'star', interval: 0.8
+              shape: 'star', interval: 0.8, r: 8
             },
             {
               t: 5, type: 'fan', count: 5, spread: 0.9, angle: -0.785, speed: 2.8,
               angleStep: -0.06, color: '#bb88ff', coreColor: '#eeccff',
-              shape: 'star', interval: 0.8
+              shape: 'star', interval: 0.8, r: 8
             },
           ],
         },
