@@ -9,6 +9,14 @@ taisei/
 bin/
 lib/
 
+# Python venv leftovers (see pyvenv.cfg; kept locally, not part of the app).
+include/
+lib64
+pyvenv.cfg
+
+# PCCB (TH07) asset dump used for the Yuyuko/Alice ports (see th07_assets/).
+th07_assets/
+
 *.mid
 *.anm
 *.std
