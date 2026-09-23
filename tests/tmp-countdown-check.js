@@ -18,7 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = __dirname;
+const ROOT = path.join(__dirname, '..'); // serve the repo root (this script lives in tests/)
 const PORT = 8140;
 const URL = `http://127.0.0.1:${PORT}/index.html`;
 const DBG_SP = 9371; // single-player page

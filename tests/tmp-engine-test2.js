@@ -288,6 +288,10 @@ section('Spawn bullets / dolls / destructibles');
 section('Phase beams (Moonlight Ray)');
 {
   const e = mkEngine();
+  // bombs: 0 — these assertions test beam collision geometry. With bombs in
+  // stock the first hit would be held by the deathbomb window (no life lost
+  // yet) instead of landing immediately; see the "Deathbomb window" section.
+  e.player.bombs = 0;
   e.phases[0].beams = [
     { xn: 0.5, width: 56, color: '#fff3b0', coreColor: '#fff' },                    // bombable
     { x: 100, width: 40, t: 2, dur: 2, warn: 0.5, unclearable: true, color: '#f00' }, // timed + opt-in telegraph
@@ -335,6 +339,9 @@ section('Laser emitter (telegraph + screen-edge length)');
   // mkEngine: boss at (240, 90), player at (240, 560) -> the laser aims
   // straight down at the player.
   const e = mkEngine();
+  // bombs: 0 — collision assertions below; a stocked bomb would hold the
+  // first hit in the deathbomb window (see the "Deathbomb window" section).
+  e.player.bombs = 0;
   e._fireEmitter({ type: 'laser', spacing: 14, speed: 0.4, life: 40, r: 8, color: '#9966ff' });
   // No laserLen -> the beam stretches to the screen edge (and just past it).
   const far = Math.max(...e.bullets.map(b => b.y));
@@ -350,6 +357,7 @@ section('Laser emitter (telegraph + screen-edge length)');
   assert(e.player.lives === 98, 'laser hits once it grows to full width');
   // warn: 0 opts out of the telegraph entirely.
   const e2 = mkEngine();
+  e2.player.bombs = 0; // same reason as above
   e2._fireEmitter({ type: 'laser', spacing: 14, speed: 0.4, life: 40, r: 8, warn: 0 });
   e2.player.invuln = 0;
   e2._checkCollisions();
@@ -370,6 +378,40 @@ section('Laser emitter (telegraph + screen-edge length)');
   const stillWarn = e3.bullets.filter(b => b.laserGroup && e3.time < b.laserGroup.solidAt);
   assert(stillWarn.length > 0 && stillWarn.every(b => b.laserGroup.solidAt === g2),
     'later segment keeps its own telegraph while the first is already solid');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+section('Deathbomb window (hit-grace + noBombs)');
+{
+  // A helper engine standing in a solid beam, so a single _updateBeams() is a
+  // guaranteed hit.
+  function mkBeamHit() {
+    const e = mkEngine();
+    e.player.x = 240; e.player.y = 400;
+    e.phases[0].beams = [{ xn: 0.5, width: 56 }];
+    return e;
+  }
+  // With bombs in stock, a hit is HELD for DEATHBOMB_FRAMES: no life is lost
+  // yet, and bombing inside the window cancels it.
+  const e = mkBeamHit();
+  e._updateBeams();
+  assert(e.player.lives === 99, 'hit is held while the deathbomb window is open');
+  assert(e.deathbombTimer === CONFIG.DEATHBOMB_FRAMES, 'window opens for DEATHBOMB_FRAMES');
+  e.bomb();
+  assert(e.player.lives === 99, 'deathbomb cancels the held hit');
+  assert(e.deathbombTimer === 0, 'deathbomb closes the window');
+  // Window expired without a bomb: the held hit lands.
+  const e2 = mkBeamHit();
+  e2._updateBeams();
+  for (let i = 0; i < CONFIG.DEATHBOMB_FRAMES; i++) e2._updateDeathbomb();
+  assert(e2.player.lives === 98, 'held hit lands when the window expires');
+  // noBombs phases (Kaguya's End of Imperishable Night): the bomb can't be
+  // used there, so no window opens — the hit lands immediately.
+  const e3 = mkBeamHit();
+  e3.phases[0].noBombs = true;
+  e3._updateBeams();
+  assert(e3.player.lives === 98, 'noBombs phase: hit lands immediately (no unusable window)');
+  assert(e3.deathbombTimer === 0, 'noBombs phase: no deathbomb window opens');
 }
 
 // ────────────────────────────────────────────────────────────────────────────

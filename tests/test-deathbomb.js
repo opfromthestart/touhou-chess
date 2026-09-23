@@ -229,19 +229,25 @@ console.log('--- Deathbomb: 8-frame grace window ---');
 }
 
 // Case 7: deathbomb respects noBombs phase.
+// In a noBombs phase the bomb can't be used at all, so the deathbomb window
+// (a bomb-based grace) must NOT open — the hit lands immediately instead of
+// being held behind an unusable cue. (Previously the window opened and the
+// bomb was rejected, delaying the hit for DEATHBOMB_FRAMES with a misleading
+// flash.)
 {
-  const e = makeTestEngine(1, 1);
+  const e = makeTestEngine(2, 1);
   e.phases[0].noBombs = true; // bombs disabled this phase
   e.bullets.push(makeBullet(e.player.x, e.player.y, 0, 0, { r: 4 }));
   e._checkCollisions();
-  assert(e.deathbombTimer > 0, 'precondition: window is open');
+  assert(e.deathbombTimer === 0,
+    'noBombs phase: no deathbomb window opens (got ' + e.deathbombTimer + ')');
+  assert(e.player.lives === 1,
+    'noBombs phase: hit lands immediately (got ' + e.player.lives + ')');
 
   e.bomb(); // should be rejected (noBombs phase)
 
   assert(e.player.bombs === 1,
     'noBombs phase: bomb not consumed (got ' + e.player.bombs + ')');
-  assert(e.deathbombTimer > 0,
-    'noBombs phase: window still open (got ' + e.deathbombTimer + ')');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

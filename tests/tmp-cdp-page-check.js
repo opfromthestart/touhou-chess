@@ -11,7 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = __dirname;
+const ROOT = path.join(__dirname, '..'); // serve the repo root (this script lives in tests/)
 const PORT = 8127;
 const DBG_PORT = 9226;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

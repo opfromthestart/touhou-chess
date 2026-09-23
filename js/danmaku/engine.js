@@ -1979,12 +1979,16 @@ class DanmakuEngine {
 
   _hitPlayer() {
     const p = this.player;
+    const phase = this.phases[this.phaseIndex];
     // Deathbomb window: if the player has a bomb, ANY hit opens an 8-frame
     // grace window where pressing bomb cancels the hit (no life lost). The hit
     // is held during the window — lives are NOT decremented yet — so the
     // player can still move and act. (Works on every life, not just the last:
-    // a bomb can negate any hit you take.)
-    if (p.bombs > 0 && this.deathbombTimer === 0) {
+    // a bomb can negate any hit you take.) No window in noBombs phases: the
+    // bomb can't be used there (Kaguya's End of Imperishable Night), so the
+    // hit must land immediately instead of flashing an unusable cue.
+    const bombsUsable = !(phase && phase.noBombs);
+    if (bombsUsable && p.bombs > 0 && this.deathbombTimer === 0) {
       this.deathbombTimer = CONFIG.DEATHBOMB_FRAMES;
       p.invuln = CONFIG.DEATHBOMB_FRAMES; // brief invuln to prevent multi-hit
       this.shake = 8;

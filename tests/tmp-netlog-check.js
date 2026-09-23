@@ -23,7 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = __dirname; // this script lives at the repo root
+const ROOT = path.join(__dirname, '..'); // serve the repo root (this script lives in tests/)
 const PORT = 8150;
 const URL = `http://127.0.0.1:${PORT}/index.html`;
 const DBG_A = 9381; // host (white)
@@ -210,8 +210,15 @@ const problems = (p) => [p];
   // authoritative result-recv instead of end-spect. Either observation path is
   // valid — what matters is that the guest saw it BEFORE resolving.
   ck('guest: observed attacker end (end-spect or result-recv)', hasEv(evB, 'race', (e) => (e.what === 'end-spect' || e.what === 'result-recv') && e.side === 'attacker' && e.result === 'lose'));
-  ck('host: resolve fail (premature-attacker-dead)', hasEv(evA, 'race', (e) => e.what === 'resolve' && e.outcome === 'fail' && e.path === 'premature-attacker-dead' && e.results && e.results.attacker));
-  ck('guest: resolve fail (premature-attacker-dead)', hasEv(evB, 'race', (e) => e.what === 'resolve' && e.outcome === 'fail' && e.path === 'premature-attacker-dead'));
+  // Resolution paths (post-desync-fix, see b056b31): the SURVIVING side
+  // (guest/defender) resolves immediately via the safe premature path —
+  // opponent's AUTHORITATIVE 'lose' + own engine still running. The DEAD side
+  // (host/attacker) cannot resolve on its own: its own authoritative 'lose'
+  // does not determine the outcome (the defender could have died earlier,
+  // which its delayed spectator copy hasn't shown yet), so it waits for the
+  // opponent's 'race-end' safety sync. Both must agree on the outcome.
+  ck('guest: resolve fail (premature-opp-dead)', hasEv(evB, 'race', (e) => e.what === 'resolve' && e.outcome === 'fail' && e.path === 'premature-opp-dead'));
+  ck('host: resolve fail (remote-race-end)', hasEv(evA, 'race', (e) => e.what === 'resolve' && e.outcome === 'fail' && e.path === 'remote-race-end' && e.results && e.results.attacker));
 
   // 4. RTT + offset
   const rttA = evA.filter((e) => e.kind === 'rtt');
