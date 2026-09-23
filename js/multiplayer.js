@@ -999,6 +999,7 @@
         lives: p.lives, bombs: p.bombs, invuln: p.invuln,
         focus: p.focus, alive: p.alive,
         phaseIndex: e.phaseIndex, phaseTime: e.phaseTime, phaseHp: e.phaseHp,
+        phaseBroken: !!e.phaseBroken, // true when the card just ended by damage
         bombSeq: e.bombSeq,
         result: e.result,
       },

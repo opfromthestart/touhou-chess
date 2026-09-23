@@ -316,6 +316,13 @@ body {
 }
 .piece.white .type-badge { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.85); }
 .piece.black .type-badge { color: #d8d0ff; text-shadow: 0 1px 2px rgba(0,0,0,0.95); }
+/* Captured-piece fade overlay (see BoardUI._animateMove). Absolute so it can
+   sit on top of whatever piece just landed on the same square. */
+.piece-captured-fade {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+}
 
 /* Captured trays */
 .tray-piece {
@@ -735,6 +742,17 @@ button:active { transform: translateY(1px); }
 }
 .spell-banner.show { color: #fff; text-shadow: 0 0 8px #f5c542; }
 .spell-banner.spell.show { color: #f5c542; }
+/* Spell-card BREAK (gauge destroyed): a bright, pulsing reward banner. */
+@keyframes break-pulse {
+  0%   { transform: scale(0.8); opacity: 0.4; }
+  35%  { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.spell-banner.break.show {
+  color: #fff;
+  text-shadow: 0 0 6px #ffffff, 0 0 16px #f5c542, 0 0 28px #f5c542;
+  animation: break-pulse 0.45s ease-out;
+}
 
 .boss-hp-wrap { width: 480px; margin: 2px 0; }
 .boss-hp-label {
@@ -770,6 +788,12 @@ button:active { transform: translateY(1px); }
   color: var(--text-dim);
 }
 .fight-hud .hud-item span { color: var(--text); font-weight: 700; }
+/* Graze counter flash: pops bright cyan the moment a graze lands. */
+@keyframes graze-pop {
+  0%   { color: #bfefff; text-shadow: 0 0 8px #bfefff; transform: scale(1.5); }
+  100% { color: var(--text); text-shadow: none; transform: scale(1); }
+}
+#hud-graze.graze-flash { display: inline-block; animation: graze-pop 0.35s ease-out; }
 .bomb-gauge {
   flex: 1;
   height: 8px;
@@ -834,7 +858,9 @@ button:active { transform: translateY(1px); }
   gap: 12px;
 }
 .stats-name { color: var(--text-dim); }
-.stats-vals { color: var(--text); font-weight: 700; white-space: nowrap; }
+/* `white-space: normal` lets a long "Cards broken" list wrap; short values
+   (score/lives/graze/time, practice close·moved) stay on one line. */
+.stats-vals { color: var(--text); font-weight: 700; text-align: right; }
 
 /* Game-over modal */
 .game-over-content {
@@ -873,6 +899,185 @@ button:active { transform: translateY(1px); }
   font-size: 13px;
 }
 .game-over-stats .stat b { color: var(--accent-2); font-size: 15px; }
+/* End-of-game "Danmaku record": how the match went in the boss fights
+   (aggregated per-fight summaries). Mirrors the .game-over-stats look. */
+.game-over-danmaku {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 20px;
+  text-align: left;
+}
+.game-over-danmaku .danmaku-record-title {
+  grid-column: 1 / -1;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent-2);
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.game-over-danmaku .stat {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--ink-line-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.game-over-danmaku .stat b { color: var(--accent-2); font-size: 15px; }
+/* End-of-game "By boss": a per-youkai breakdown of the danmaku record.
+   Each row is a boss (name + W-L + score + cards broken); the row's spans
+   are laid out directly in the grid via display:contents. */
+.game-over-bosses {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 6px 14px;
+  margin-bottom: 20px;
+  text-align: left;
+  align-items: center;
+}
+.game-over-bosses .boss-record-title {
+  grid-column: 1 / -1;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent-2);
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.game-over-bosses .boss-row { display: contents; }
+.game-over-bosses .boss-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-over-bosses .boss-wl {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.game-over-bosses .boss-score {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.game-over-bosses .boss-cards {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.game-over-buttons { display: flex; gap: 10px; justify-content: center; }
+.game-over-buttons .secondary {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-dim);
+}
+
+/* ===== Replay viewer ===== */
+.replay-content {
+  max-width: 560px;
+  width: 94%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.replay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.replay-header h2 { margin: 0; font-size: 22px; letter-spacing: 2px; }
+.replay-close { padding: 4px 12px; }
+.replay-board {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: var(--frame);
+  border: 6px solid var(--frame);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 2px rgba(245,197,66,0.35),
+    0 0 0 2px rgba(245,197,66,0.5);
+}
+.replay-board .square { cursor: default; }
+.replay-gameover {
+  background: rgba(176, 107, 255, 0.14);
+  border: 1px solid #b06bff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #e6d5ff;
+  text-align: center;
+}
+.replay-gameover:empty { display: none; }
+.replay-fight-banner {
+  background: rgba(245, 197, 66, 0.12);
+  border: 1px solid var(--accent-2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--accent-2);
+  text-align: center;
+}
+.replay-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 16px;
+}
+.replay-trays {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.replay-move-log {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 110px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--ink-line-soft);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.replay-controls #replay-btn-play { min-width: 92px; }
+.replay-speed-label { font-size: 12px; color: var(--text-dim); }
+.replay-progress {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.replay-load-btn {
+  font-size: 12px;
+  color: var(--accent-2);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
 .hidden { display: none !important; }
 

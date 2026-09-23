@@ -114,12 +114,54 @@ function scalePhase(phase, diff, boss) {
   return { ...phase, emits };
 }
 
+// Per-boss, per-difficulty balance tuning. Each boss may declare a `tune`
+// object with a sub-object per difficulty ('normal' / 'lunatic'), each holding
+// multipliers applied ON TOP of the default difficulty scaling:
+//   - durationMul: scale every phase's duration (shorter = less bullet
+//     exposure = easier). This is the main lever for low-DPS pieces, who
+//     endure the full card duration instead of breaking it early.
+//   - densityMul: scale every emit's density (bullet counts) relative to the
+//     default for that difficulty. 1.0 = default; <1 sparser/easier, >1
+//     denser/harder. Composes with the global Lunatic density scale.
+//   - hpMul: scale every phase's HP gauge (lower = stronger pieces break the
+//     card faster = shorter fight).
+// Because the two difficulties are tuned independently, Lunatic stays harder
+// than Normal even when Normal is eased. These are the balance knobs used to
+// hit the per-boss win-rate targets (docs/danmaku-engine.md §6); the authored
+// pattern data stays EoSD-faithful.
+function applyTune(phase, tune, difficulty) {
+  const t = (tune && tune[difficulty]) || null;
+  if (!t) return phase;
+  let out = phase;
+  if (t.durationMul !== undefined) out = { ...out, duration: out.duration * t.durationMul };
+  if (t.hpMul !== undefined) out = { ...out, hp: out.hp * t.hpMul };
+  if (t.densityMul !== undefined) {
+    const m = t.densityMul;
+    const scalePat = (pat) => {
+      if (!pat || typeof pat !== 'object') return pat;
+      const o = { ...pat };
+      if (o.count !== undefined) o.count = Math.max(1, Math.round(o.count * m));
+      if (Array.isArray(o.spawnEmits)) o.spawnEmits = o.spawnEmits.map(scalePat);
+      return o;
+    };
+    const scaleEm = (em) => {
+      if (!em || typeof em !== 'object') return em;
+      const o = { ...em, densityMul: (em.densityMul || 1) * m };
+      if (Array.isArray(em.spawnEmits)) o.spawnEmits = em.spawnEmits.map(scaleEm);
+      if (em.type === 'doll' && em.shoot) o.shoot = scalePat(em.shoot);
+      return o;
+    };
+    out = { ...out, emits: out.emits.map(scaleEm) };
+  }
+  return out;
+}
+
 // Build the phase list for a boss + difficulty.
 function getPhases(bossId, difficulty) {
   const boss = BOSSES[bossId];
   if (!boss) return [];
   const base = boss.phases[difficulty === 'lunatic' ? 'lunatic' : 'normal'];
-  return base.map(p => scalePhase(p, difficulty, boss));
+  return base.map(p => scalePhase(applyTune(p, boss.tune, difficulty), difficulty, boss));
 }
 
 // ── Shared Rumia patterns ─────────────────────────────────────────────────
@@ -1510,6 +1552,12 @@ const BOSSES = {
   //   Lunatic: + Moon Sign "Moonlight Ray" (midboss spell, Hard/Lunatic only)
   rumia: {
     name: 'Rumia',
+    // Balance tuning (applyTune): per-difficulty multipliers on top of the
+    // default scaling. Targets: Normal ~78% win, Lunatic ~15% win.
+    tune: {
+      normal:  { durationMul: 0.75, densityMul: 0.75 },
+      lunatic: { durationMul: 0.8,  densityMul: 0.8 },
+    },
     color: '#9a8cff',
     bgTop: '#0b0b1e',
     bgBottom: '#04040a',
@@ -1634,6 +1682,16 @@ const BOSSES = {
 
   nitori: {
     name: 'Nitori',
+    // Nitori's aimed patterns are intrinsically dense — ease Normal a lot so
+    // low-DPS pieces can survive the full card duration. Targets: Normal ~85%
+    // win, Lunatic ~15% win.
+    tune: {
+      // Nitori is a KNIGHT's boss — one of the EASIEST (with Rumia/Hina). Her
+      // oozing patterns are intrinsically dense, so Normal is eased well below
+      // authored values; Lunatic stays tuned independently.
+      normal:  { durationMul: 0.33, densityMul: 0.28 },
+      lunatic: { durationMul: 0.6,  densityMul: 0.6 },
+    },
     color: '#55ccff',
     bgTop: '#061420',
     bgBottom: '#020810',
@@ -1745,6 +1803,12 @@ const BOSSES = {
   // HINA_* constants above for the full decode.
   hina: {
     name: 'Hina',
+    // Hina's Normal is about right; her Lunatic was over-hardened (1.7%) —
+    // ease it back toward ~15%. Targets: Normal ~80% win, Lunatic ~15% win.
+    tune: {
+      normal:  { durationMul: 0.7,  densityMul: 0.7 },
+      lunatic: { durationMul: 1.0,  densityMul: 1.1 },
+    },
     color: '#ff8899',
     bgTop: '#1a0a10',
     bgBottom: '#08030a',
@@ -1847,6 +1911,12 @@ const BOSSES = {
   // the PATCHOULI_* constants above for the disasm provenance).
   patchouli: {
     name: 'Patchouli',
+    // Normal is about right; Lunatic was a touch over-hardened (5%) — ease it
+    // toward ~18%. Targets: Normal ~77% win, Lunatic ~18% win.
+    tune: {
+      normal:  { durationMul: 0.85, densityMul: 0.9 },
+      lunatic: { durationMul: 0.9,  densityMul: 1.0 },
+    },
     color: '#cc88ff',
     bgTop: '#140a20',
     bgBottom: '#08040e',
@@ -1871,6 +1941,15 @@ const BOSSES = {
   // ── Alice — Bishop (value 3). Dolls. ──
   alice: {
     name: 'Alice',
+    // Alice's doll cards are intrinsically sparse — the bot dodges them at any
+    // density up to ~1.5x (a hard 100% -> 43% cliff, no clean middle), so she
+    // stays at authored Normal density: she's the EASIEST boss (Normal ~100%),
+    // which is thematically right for the gentle puppeteer. Her Lunatic is
+    // hardened via the densityMul 1.4 (Normal ~100% / Lunatic ~22%).
+    tune: {
+      normal:  { durationMul: 1.0, densityMul: 1.0 },
+      lunatic: { durationMul: 1.0, densityMul: 1.4 },
+    },
     color: '#cc66ff',
     bgTop: '#1a0a24',
     bgBottom: '#0a0410',
@@ -1903,6 +1982,12 @@ const BOSSES = {
   // ── Remilia — Rook (value 5). Vampire final-boss pressure. ──
   remilia: {
     name: 'Remilia',
+    // Normal is a touch low (68%) — ease slightly. Lunatic is about right
+    // (22%). Targets: Normal ~72% win, Lunatic ~20% win.
+    tune: {
+      normal:  { durationMul: 0.8,  densityMul: 0.85 },
+      lunatic: { durationMul: 1.0,  densityMul: 1.5 },
+    },
     color: '#ff3344',
     bgTop: '#1e0810',
     bgBottom: '#0a0406',
@@ -1974,6 +2059,12 @@ const BOSSES = {
   // YUYUKO_* constants above for the disasm provenance).
   yuyuko: {
     name: 'Yuyuko',
+    // Normal is about right (78%); Lunatic was over-hardened (1.7%) — ease it
+    // back toward ~18%. Targets: Normal ~78% win, Lunatic ~18% win.
+    tune: {
+      normal:  { durationMul: 0.85, densityMul: 0.95 },
+      lunatic: { durationMul: 0.9,  densityMul: 1.0 },
+    },
     color: '#6688ff',
     bgTop: '#0a0e24',
     bgBottom: '#04060e',
@@ -2005,6 +2096,13 @@ const BOSSES = {
   // small (r4) as in the original.
   kaguya: {
     name: 'Kaguya',
+    // Kaguya is the hardest boss — Normal ~62% is fine. Her Lunatic is
+    // intrinsically brutal (0% even for the king); ease it a bit more so it's
+    // winnable but still the hardest. Targets: Normal ~62% win, Lunatic ~12% win.
+    tune: {
+      normal:  { durationMul: 0.6,  densityMul: 0.55 },
+      lunatic: { durationMul: 0.55, densityMul: 0.5 },
+    },
     color: '#ffdd88',
     bgTop: '#1a1428',
     bgBottom: '#0a0812',
@@ -2400,9 +2498,12 @@ const BOSSES = {
               color: '#66aaff', coreColor: '#e0ecff', shape: 'circle', interval: 0.9
             },
             // First Moon / Rat Hour (H/L: 8-arm spiral + 11-way aimed).
+            // interval 0.12 = 2x the Normal 0.24 (a proper Lunatic escalation);
+            // the original 0.07 (114 bullets/sec) was an unwinnable wall — even
+            // the king died here, so it broke the "dodgeable by a pawn" rule.
             {
               t: 1.1, type: 'spiral', arms: 8, rotSpeed: 0.42, speed: 2.6,
-              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.07
+              color: '#66ffcc', coreColor: '#d8fff0', shape: 'circle', interval: 0.12
             },
             {
               t: 1.1, type: 'aimed', count: 11, spread: 0.55, speed: 3.0, angleStep: 0.06, interval: 0.4,
@@ -2468,6 +2569,16 @@ const BOSSES = {
 
   yukari: {
     name: 'Yukari',
+    // Second-hardest boss — Normal was too low (37%) — ease it toward ~60%.
+    // Lunatic is about right (18%). Targets: Normal ~60% win, Lunatic ~18% win.
+    tune: {
+      // Yukari is the QUEEN's boss — the second-hardest (after Kaguya). Her
+      // EoSD patterns (Flandre/Patchouli ports) are intrinsically sparse, so
+      // Normal is hardened (duration + density up) to sit her near the top of
+      // the difficulty ladder; Lunatic stays tuned independently.
+      normal:  { durationMul: 0.7,  densityMul: 0.65 },
+      lunatic: { durationMul: 0.6,  densityMul: 0.55 },
+    },
     color: '#bb88ff',
     bgTop: '#1a1028',
     bgBottom: '#0a0614',

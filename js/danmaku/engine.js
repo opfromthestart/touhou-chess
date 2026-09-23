@@ -162,6 +162,7 @@ class DanmakuEngine {
     this.H = canvas.height;
     this.onEnd = opts.onEnd || (() => { });
     this.onPhase = opts.onPhase || (() => { });
+    this.onPhaseEnd = opts.onPhaseEnd || (() => { });
     this.onHud = opts.onHud || (() => { });
 
     this.player = null;
@@ -203,6 +204,23 @@ class DanmakuEngine {
     // Monotonic count of bomb presses (the *intent* to bomb), used to relay
     // bomb edge-events across the network without dropping quick taps.
     this.bombSeq = 0;
+    // ── Spell-card-break payoff (visual only) ──────────────────────────────
+    // When a card ends by its HP gauge being broken (not by timeout), the
+    // remaining bullets dissolve into drifting sparkles and the screen flashes.
+    // Purely cosmetic — no mechanical reward (win-rate neutral) and it must not
+    // consume the seeded RNG (sparkle velocity comes from each bullet's own
+    // motion), so multiplayer mirrors stay in lockstep.
+    this.breakParticles = [];
+    this.breakFlash = 0;
+    this.phaseBroken = false;
+    // ── Graze feedback (visual only) ───────────────────────────────────────
+    // A graze (bullet/beam passing just outside the hitbox) is worth score +
+    // bomb gauge but was otherwise invisible. Each graze spawns a small
+    // expanding ring at the graze point so close dodges read as intentional.
+    // Position comes from the game state (ship + graze source) — no seeded
+    // RNG — and the mirror never runs local collisions, so this stays local
+    // (like screen shake) and can't desync.
+    this.grazeFx = [];
 
     // ── Spectator mirror (multiplayer) ─────────────────────────────────────
     // When `spectatorMirror` is true this engine is a *display* copy of the
@@ -316,9 +334,14 @@ class DanmakuEngine {
     // locally so the ghost's bullet field + RNG stream stay aligned with the
     // real fight's (both fights consume the seeded RNG in lockstep).
     if (typeof ship.phaseIndex === 'number' && ship.phaseIndex !== this.phaseIndex) {
+      const broken = !!ship.phaseBroken; // the real fight destroyed the card
+      const endedPhase = this.phases[this.phaseIndex];
       this._finalizePhase(this.phaseIndex);
       this.phaseIndex = ship.phaseIndex;
       this.phaseTime = 0;
+      this.phaseBroken = broken;
+      if (endedPhase) this.onPhaseEnd(endedPhase, { broken });
+      if (broken) this._spawnBreakFx(); // before the field is cleared below
       if (this.phaseIndex < this.phases.length) {
         for (const b of this.bullets) b.active = false;
         this.bullets = [];
@@ -394,13 +417,18 @@ class DanmakuEngine {
     // Per-spell-card stats (tracked in every fight, shown in Practice Mode):
     // total pixels the player moved, and the time-average of the distance to
     // the closest bullet. `avgDist` is finalized when the card ends.
+    // `broken` is set when the card's HP gauge is destroyed by damage (as
+    // opposed to timing out) — used for the fight-summary "cards broken".
     this.phaseStats = phases.map(ph => ({
       name: ph.name,
       moved: 0,        // px moved during this card
       distSum: 0,      // sum of per-frame min distances to a bullet
       distSamples: 0,  // frames where at least one bullet was on screen
       avgDist: 0,
+      broken: false,   // HP gauge broken by damage (vs. timed out)
     }));
+    // Starting lives, so the result screen can show "lives left / total".
+    this.startLives = playerStats.lives;
     // Deterministic per-fight randomness: same fight identity -> same bullet
     // field, every time. (The chess/AI layer keeps its own Math.random.)
     const seedStr = `${boss.charId || boss.name || 'boss'}|${playerPieceType}|${playerChar || ''}`;
@@ -411,6 +439,11 @@ class DanmakuEngine {
     this.keys = {};
     this.bombSeq = 0;
     this.deathbombTimer = 0;
+    // Fresh break payoff for every fight (no leftover sparkles/flash).
+    this.breakParticles = [];
+    this.breakFlash = 0;
+    this.phaseBroken = false;
+    this.grazeFx = [];
     this.shotPattern =
       CONFIG.SHOT_PATTERNS[playerPieceType] || CONFIG.SHOT_PATTERNS.p;
     this.phaseIndex = 0;
@@ -504,6 +537,8 @@ class DanmakuEngine {
     this._emitPattern();
     this._updateFieldFreeze();
     this._updateBullets();
+    this._updateBreakParticles();
+    this._updateGrazeFx();
     // In spectator-mirror mode the ship is a puppet: it has no local shots,
     // can't be hit (bullets/beams), can't bomb, and its phase is driven by the
     // opponent's authoritative state (applyMirrorState) — so only the bullet
@@ -522,9 +557,16 @@ class DanmakuEngine {
     // authoritative state, so there is no local progression.
     const phase = this.phases[this.phaseIndex];
     if (phase && !this.spectatorMirror && (this.phaseTime >= phase.duration || this.phaseHp <= 0)) {
+      const broken = this.phaseHp <= 0; // destroyed by damage (vs. timed out)
+      this.phaseBroken = broken; // carried to multiplayer mirrors (ship snapshot)
+      if (this.phaseStats && this.phaseStats[this.phaseIndex]) {
+        this.phaseStats[this.phaseIndex].broken = broken;
+      }
       this._finalizePhase(this.phaseIndex);
+      this.onPhaseEnd(phase, { broken });
       this.phaseIndex++;
       this.phaseTime = 0;
+      if (broken) this._spawnBreakFx(); // before the field is cleared below
       if (this.phaseIndex >= this.phases.length) {
         this._end('win');
       } else {
@@ -606,6 +648,67 @@ class DanmakuEngine {
     const st = this.phaseStats ? this.phaseStats[i] : null;
     if (!st) return;
     st.avgDist = st.distSamples > 0 ? st.distSum / st.distSamples : 0;
+  }
+
+  // Trigger the spell-card-break payoff: a screen flash + the remaining bullets
+  // dissolving into drifting sparkles. Called only when a card ends by its HP
+  // gauge being broken (not by timeout). Must run BEFORE the field is cleared.
+  // No seeded-RNG consumption (see class comment) — deterministic for mirrors.
+  _spawnBreakFx() {
+    this.breakFlash = 1;
+    const parts = [];
+    let i = 0;
+    for (const b of this.bullets) {
+      if (!b.active) continue;
+      if (parts.length >= 400) break; // cap: a dense field shouldn't lag
+      const life = 24 + (i % 12);
+      parts.push({
+        x: b.x, y: b.y,
+        // Drift along the bullet's own motion + a small deterministic spread
+        // (derived from the index, NOT the seeded RNG).
+        vx: b.vx * 0.45 + ((i % 7) - 3) * 0.35,
+        vy: b.vy * 0.45 + ((i % 5) - 2) * 0.25,
+        life, maxLife: life,
+        color: b.color || '#ffffff',
+        r: Math.max(1.5, b.r * 0.8),
+      });
+      i++;
+    }
+    this.breakParticles = parts;
+    sfxPlay('break');
+  }
+
+  // Advance + cull break sparkles. Runs every frame (both local and mirror),
+  // so the payoff decays identically on every client.
+  _updateBreakParticles() {
+    if (this.breakParticles.length === 0) return;
+    const alive = [];
+    for (const p of this.breakParticles) {
+      p.life--;
+      if (p.life <= 0) continue;
+      p.x += p.vx; p.y += p.vy;
+      p.vx *= 0.94; p.vy *= 0.94; // gentle drag
+      alive.push(p);
+    }
+    this.breakParticles = alive;
+  }
+
+  // Spawn a graze ring (see class comment). Cap keeps a dense field cheap —
+  // the oldest rings are dropped first.
+  _addGrazeFx(x, y) {
+    if (this.grazeFx.length >= 40) this.grazeFx.shift();
+    this.grazeFx.push({ x, y, t: 0 });
+  }
+
+  // Advance + cull graze rings (~12 frames of life each).
+  _updateGrazeFx() {
+    if (this.grazeFx.length === 0) return;
+    const alive = [];
+    for (const g of this.grazeFx) {
+      g.t += 1 / 12;
+      if (g.t < 1) alive.push(g);
+    }
+    this.grazeFx = alive;
   }
 
   _updateBoss() {
@@ -1848,6 +1951,10 @@ class DanmakuEngine {
         this.score += 100;
         this.bombGauge = Math.min(1, this.bombGauge + 0.02);
         sfxPlay('graze');
+        // Visual: a small ring at the graze point (midway in the graze band).
+        const gx = p.x + (dx / dist) * (hb + b.r + 5);
+        const gy = p.y + (dy / dist) * (hb + b.r + 5);
+        this._addGrazeFx(gx, gy);
       }
       // Hit.
       if (p.invuln <= 0 && dist < hb + b.r) {
@@ -1905,6 +2012,9 @@ class DanmakuEngine {
         this.score += 100;
         this.bombGauge = Math.min(1, this.bombGauge + 0.02);
         sfxPlay('graze');
+        // Visual: a ring at the point of the beam nearest the ship.
+        const cp = this._beamClosestPoint(bm, p.x, p.y);
+        this._addGrazeFx(cp.x, cp.y);
       } else if (d > halfW + hb + 14) {
         bm._grazed = false; // re-arm graze once clear
       }
@@ -1955,6 +2065,29 @@ class DanmakuEngine {
     // distance falls back to the distance to the pivot itself.
     if (g.dir * ly < 0) return Math.hypot(lx, ly);
     return Math.abs(lx);
+  }
+  // The point of a beam's ray nearest (px, py) — used to place the graze ring.
+  // Behind the pivot, the nearest point is the pivot itself (matches _beamDist).
+  _beamClosestPoint(bm, px, py) {
+    const g = this._beamGeom(bm);
+    let lx = px - g.px, ly = py - g.py;
+    const ang = this._beamAngle(bm);
+    if (ang) {
+      const c = Math.cos(-ang), s = Math.sin(-ang);
+      const nx = lx * c - ly * s;
+      const ny = lx * s + ly * c;
+      lx = nx; ly = ny;
+    }
+    // The beam is the local x=0 line extending along local y = dir, so the
+    // closest point on the ray is (0, ly), clamped to the pivot behind it.
+    const inFront = g.dir * ly >= 0;
+    const cx = 0, cy = inFront ? ly : 0;
+    // Rotate back into world space.
+    if (ang) {
+      const c = Math.cos(ang), s = Math.sin(ang);
+      return { x: g.px + cx * c - cy * s, y: g.py + cx * s + cy * c };
+    }
+    return { x: g.px + cx, y: g.py + cy };
   }
   // Time since the beam's current active window began (for repeating windows,
   // the start of the current cycle's on-phase).
@@ -2091,6 +2224,29 @@ class DanmakuEngine {
     this.onEnd(result);
   }
 
+  // A compact, read-only summary of the (finished or in-progress) fight for
+  // the result screen and tests. Never mutates state, so it is safe to call
+  // on the live engine and on multiplayer mirrors alike.
+  getSummary() {
+    const cardsBroken = this.phaseStats
+      ? this.phaseStats.filter((s) => s.broken).map((s) => s.name)
+      : [];
+    return {
+      result: this.result,
+      score: this.score || 0,
+      graze: this.graze || 0,
+      lives: this.player ? this.player.lives : 0,
+      startLives:
+        this.startLives !== undefined
+          ? this.startLives
+          : this.player
+            ? this.player.lives
+            : 0,
+      time: this.time || 0,
+      cardsBroken,
+    };
+  }
+
   render() {
     const ctx = this.ctx;
     ctx.save();
@@ -2124,6 +2280,18 @@ class DanmakuEngine {
       this._drawBullet(ctx, b);
     }
 
+    // Spell-card-break sparkles (bullets dissolved into light).
+    for (const p of this.breakParticles) {
+      const a = p.life / p.maxLife;
+      ctx.globalAlpha = a * 0.35;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2.2, 0, TAU); ctx.fill();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.7, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
     // Phase-level persistent beams (drawn over bullets, under the player).
     this._drawBeams(ctx);
 
@@ -2146,6 +2314,19 @@ class DanmakuEngine {
       ctx.restore();
     }
 
+    // Graze rings: a small expanding circle at each graze point, fading out
+    // over ~12 frames. Drawn over bullets/beams so the near-miss reads clearly.
+    if (this.grazeFx.length > 0) {
+      for (const g of this.grazeFx) {
+        const r = 4 + g.t * 12;
+        ctx.globalAlpha = (1 - g.t) * 0.85;
+        ctx.strokeStyle = '#bfefff';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(g.x, g.y, r, 0, TAU); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Deathbomb window: a brief red vignette flash while the grace window is
     // open (no text — the mechanic is described in the help screen instead).
     // The flash intensifies as the window shrinks.
@@ -2163,6 +2344,18 @@ class DanmakuEngine {
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, this.W, this.H);
       ctx.restore();
+    }
+
+    // Spell-card-break flash: a bright frame that fades over ~12 ticks.
+    // Decays in render() (purely visual) so it never affects the simulation.
+    if (this.breakFlash > 0) {
+      ctx.save();
+      ctx.globalAlpha = this.breakFlash * 0.5;
+      ctx.fillStyle = '#fffbe8';
+      ctx.fillRect(0, 0, this.W, this.H);
+      ctx.restore();
+      this.breakFlash *= 0.82;
+      if (this.breakFlash < 0.02) this.breakFlash = 0;
     }
 
     ctx.restore();

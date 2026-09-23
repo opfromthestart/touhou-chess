@@ -136,7 +136,68 @@ function replayGame(events, BoardClass) {
   return report;
 }
 
-// Export for Node (tests); in the browser replayGame is a global.
+// Apply ONE recorded 'turn' event to a Board, mirroring exactly what the
+// live game does (main.js applyMove / resolveCapture, multiplayer
+// applyMoveToBoard / race-failure branch). No verification, no DOM — this is
+// the shared core that both replayGame (verification) and the on-screen
+// ReplayViewer (js/ui/replay-ui.js) build on.
+//
+// Returns:
+//   { ok: true,  kind: 'move' | 'capture-ok' | 'capture-fail',
+//     move, byColor, captured: piece|null, removed: piece|null }
+//   { ok: false, error: 'ai-failed' | 'no-move' | 'wrong-side' | 'illegal' }
+function applyTurnEvent(board, ev) {
+  if (!ev || ev.type !== 'turn') return { ok: false, error: 'no-move' };
+  if (ev.failed) return { ok: false, error: 'ai-failed' };
+  if (!ev.move) return { ok: false, error: 'no-move' };
+  if (board.gameOver) return { ok: false, error: 'game-over' };
+  if (board.turn !== ev.side) return { ok: false, error: 'wrong-side' };
+
+  const m = ev.move;
+  const moves = board.getMoves(ev.side);
+  const move = moves.find(
+    (x) =>
+      x.from.row === m.from.r && x.from.col === m.from.c &&
+      x.to.row === m.to.r && x.to.col === m.to.c
+  );
+  if (!move) return { ok: false, error: 'illegal' };
+
+  // Promotion: the recorded flags carry the chosen piece; the live move
+  // object only gets it when the player picks it in the promotion UI.
+  const flags = m.flags || {};
+  if (flags.isPromotion && flags.promotionPiece) {
+    move.promotionPiece = flags.promotionPiece;
+  }
+
+  const byColor = ev.side;
+  if (ev.capture) {
+    if (ev.capture.applyCapture) {
+      // The capture went through (same as main.js resolveCapture).
+      board.applyMove(move);
+      return {
+        ok: true, kind: 'capture-ok', move, byColor,
+        captured: move.captured, removed: null,
+      };
+    }
+    // The capturing piece lost its fight and was removed; the target stays
+    // and the turn is consumed (main.js resolveCapture else branch).
+    const removed = board.grid[m.from.r][m.from.c];
+    board.removePiece(m.from.r, m.from.c);
+    board.turn = board.turn === 'white' ? 'black' : 'white';
+    if (board.turn === 'white') board.fullmoveNumber++;
+    if (board.castleEnPassant && board.castleEnPassant.color === move.piece.color) {
+      board.castleEnPassant = null;
+    }
+    return {
+      ok: true, kind: 'capture-fail', move, byColor,
+      captured: null, removed,
+    };
+  }
+  board.applyMove(move);
+  return { ok: true, kind: 'move', move, byColor, captured: null, removed: null };
+}
+
+// Export for Node (tests); in the browser these are globals.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { replayGame };
+  module.exports = { replayGame, applyTurnEvent };
 }

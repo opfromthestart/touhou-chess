@@ -9,6 +9,7 @@ class FightUI {
     this.engine = new DanmakuEngine(this.canvas, {
       onEnd: (result) => this._onEnd(result),
       onPhase: (phase) => this._onPhase(phase),
+      onPhaseEnd: (phase, info) => this._onPhaseEnd(phase, info),
       onHud: (hud) => this._onHud(hud),
     });
     this._onResult = null;
@@ -133,8 +134,12 @@ class FightUI {
 
     this.resultEl.classList.add('hidden');
     this.modal.classList.remove('hidden');
+    // A new fight: no stale break-banner / graze-flash state from the last one.
+    this._justBroke = false;
+    this._lastGraze = 0;
+    clearTimeout(this._bannerTimer);
     // phases[0] is the card actually starting (it may be a single-card slice).
-    this._banner(phases[0].name, false);
+    this._banner(phases[0].name, 'nonspell');
 
     this._startCountdown(CONFIG.DANMAKU_START_DELAY_MS);
   }
@@ -187,9 +192,10 @@ class FightUI {
     if (box) box.classList.add('hidden');
   }
 
-  _banner(name, isSpell) {
-    this.bannerEl.textContent = isSpell ? `Spell Card: ${name}` : name;
-    this.bannerEl.className = 'spell-banner show ' + (isSpell ? 'spell' : 'nonspell');
+  // Show a banner. style: 'spell' | 'nonspell' | 'break'.
+  _banner(name, style) {
+    this.bannerEl.textContent = style === 'spell' ? `Spell Card: ${name}` : name;
+    this.bannerEl.className = 'spell-banner show ' + (style || 'nonspell');
     // Auto-hide after a moment.
     clearTimeout(this._bannerTimer);
     this._bannerTimer = setTimeout(() => {
@@ -198,8 +204,26 @@ class FightUI {
   }
 
   _onPhase(phase) {
+    if (this._justBroke) return; // break banner is up; the card banner follows
     const isSpell = phase.name !== 'Non-spell';
-    this._banner(phase.name, isSpell);
+    this._banner(phase.name, isSpell ? 'spell' : 'nonspell');
+  }
+
+  // A spell card just ended. If it was DESTROYED (HP gauge broken by damage),
+  // show the "Spell Card Break!" banner on top of the next card's banner —
+  // the engine already plays the flash/jingle and dissolves the bullets.
+  _onPhaseEnd(phase, info) {
+    if (!info || !info.broken) return;
+    this._justBroke = true;
+    this._banner('Spell Card Break!', 'break');
+    // Defer the next card's banner until the break banner has had its moment.
+    clearTimeout(this._bannerTimer);
+    this._bannerTimer = setTimeout(() => {
+      this._justBroke = false;
+      if (this._result) return; // fight already over — result screen is up
+      const ph = this.engine.phases[this.engine.phaseIndex];
+      if (ph) this._banner(ph.name, ph.name !== 'Non-spell' ? 'spell' : 'nonspell');
+    }, 1200);
   }
 
   _onHud(hud) {
@@ -207,7 +231,16 @@ class FightUI {
     m.querySelector('#hud-lives').textContent = hud.lives;
     m.querySelector('#hud-bombs').textContent = hud.bombs;
     m.querySelector('#hud-score').textContent = hud.score;
-    m.querySelector('#hud-graze').textContent = hud.graze;
+    const grazeEl = m.querySelector('#hud-graze');
+    grazeEl.textContent = hud.graze;
+    // Flash the graze counter when it ticks up — grazes are otherwise easy
+    // to miss (the on-canvas ring is the main cue; this reinforces it).
+    if (hud.graze > (this._lastGraze || 0)) {
+      grazeEl.classList.remove('graze-flash');
+      void grazeEl.offsetWidth; // restart the CSS animation
+      grazeEl.classList.add('graze-flash');
+    }
+    this._lastGraze = hud.graze;
     m.querySelector('#hud-phase').textContent = `${hud.phase + 1}/${hud.phaseCount}`;
     // Countdown until the current spell card ends on its own (the phase also
     // ends early if you destroy the boss's HP).
@@ -238,8 +271,10 @@ class FightUI {
       : (this._practiceMode
         ? 'You were overwhelmed. Back to the practice menu.'
         : 'You were overwhelmed. Your piece is captured.');
-    // Per-spell-card stats (Practice Mode only): for each card, the average
-    // distance to the closest bullet and total pixels moved.
+    // Stats on the result screen. Practice Mode shows per-card stats
+    // (distance/moved); a regular board fight shows a summary of how the
+    // fight went (score, lives left, graze, time, cards broken) — a
+    // satisfying "how close did I come" moment after every danmaku fight.
     const statsEl = this.resultEl.querySelector('#fight-stats');
     if (this._practiceMode && this.engine.phaseStats) {
       const rows = this.engine.phaseStats.map((s, i) => {
@@ -251,6 +286,27 @@ class FightUI {
       });
       statsEl.innerHTML =
         '<div class="stats-title">Spell card stats</div>' + rows.join('');
+      statsEl.classList.remove('hidden');
+    } else if (!this._practiceMode && this.engine.getSummary) {
+      const s = this.engine.getSummary();
+      const fmtTime = (t) => {
+        const sec = Math.max(0, Math.floor(t));
+        return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+      };
+      const rows =
+        `<div class="stats-row"><span class="stats-name">Score</span>` +
+          `<span class="stats-vals">${s.score.toLocaleString()}</span></div>` +
+        `<div class="stats-row"><span class="stats-name">Lives left</span>` +
+          `<span class="stats-vals">${s.lives} / ${s.startLives}</span></div>` +
+        `<div class="stats-row"><span class="stats-name">Graze</span>` +
+          `<span class="stats-vals">${s.graze}</span></div>` +
+        `<div class="stats-row"><span class="stats-name">Time</span>` +
+          `<span class="stats-vals">${fmtTime(s.time)}</span></div>` +
+        (s.cardsBroken.length
+          ? `<div class="stats-row"><span class="stats-name">Cards broken</span>` +
+            `<span class="stats-vals">${s.cardsBroken.join(', ')}</span></div>`
+          : '');
+      statsEl.innerHTML = '<div class="stats-title">Fight summary</div>' + rows;
       statsEl.classList.remove('hidden');
     } else {
       statsEl.classList.add('hidden');

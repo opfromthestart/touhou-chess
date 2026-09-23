@@ -665,5 +665,146 @@ section('Spiral arm-sweep rate does not leak onto bullets');
   }
 }
 
+section('Spell card break (damage-end payoff)');
+{
+  // A card destroyed by its HP gauge (not by timeout) reports broken=true,
+  // fires the break FX (flash + sparkles), and advances the phase.
+  const e = mkEngine();
+  e.phases = [
+    { name: 'card1', duration: 9999, hp: 10, emits: [] },
+    { name: 'card2', duration: 9999, hp: 10000, emits: [] },
+  ];
+  e.phaseMaxHp = 10; e.phaseHp = 10;
+  let ended = null;
+  e.onPhaseEnd = (ph, info) => { ended = { name: ph.name, broken: info.broken }; };
+  // A few bullets on screen so the sparkles have something to dissolve.
+  for (let i = 0; i < 5; i++) {
+    e.bullets.push(makeBullet(100 + i * 20, 200, 1, 2, { r: 3, color: '#ff0000' }));
+  }
+  e.phaseHp = 0;
+  e.update();
+  assert(ended && ended.name === 'card1' && ended.broken === true, 'onPhaseEnd reports broken=true on damage end');
+  assert(e.phaseIndex === 1, 'phase advanced after break');
+  assert(e.phaseBroken === true, 'engine records the break for the mirror snapshot');
+  assert(e.breakParticles.length === 5, 'break sparkles spawned from remaining bullets');
+  assert(e.breakFlash > 0, 'break flash triggered');
+  // Sparkles drift, fade and die out; the flash decays to zero.
+  for (let i = 0; i < 60; i++) { e.update(); e.render(); }
+  assert(e.breakParticles.length === 0, 'break sparkles fade out');
+  assert(e.breakFlash === 0, 'break flash decays to zero');
+
+  // A card that times out reports broken=false and fires no FX.
+  const f = mkEngine();
+  f.phases = [
+    { name: 't1', duration: 0.5, hp: 10000, emits: [] },
+    { name: 't2', duration: 9999, hp: 10000, emits: [] },
+  ];
+  let ended2 = null;
+  f.onPhaseEnd = (ph, info) => { ended2 = info.broken; };
+  for (let i = 0; i < 40; i++) f.update(); // 40 frames ≈ 0.67s > 0.5s
+  assert(ended2 === false, 'timeout end reports broken=false');
+  assert(f.breakParticles.length === 0, 'no sparkles on timeout end');
+  assert(f.breakFlash === 0, 'no flash on timeout end');
+
+  // Determinism: two identical fights that break on the same frame produce
+  // identical sparkle fields AND identical post-break bullet fields — the FX
+  // must not consume the seeded RNG (multiplayer mirrors rely on lockstep).
+  const mk = () => {
+    const g = mkEngine();
+    g.phases = [
+      { name: 'c1', duration: 9999, hp: 100, emits: [{ t: 0, type: 'ring', count: 8, speed: 2, interval: 0.5 }] },
+      { name: 'c2', duration: 9999, hp: 10000, emits: [{ t: 0, type: 'ring', count: 6, speed: 3, interval: 0.4 }] },
+    ];
+    g.phaseMaxHp = 100; g.phaseHp = 100;
+    return g;
+  };
+  const a = mk(), b = mk();
+  for (let i = 0; i < 90; i++) { a.update(); b.update(); }
+  assert(a.bullets.length === b.bullets.length && a.bullets.length > 0, 'bullets on screen before the break');
+  a.phaseHp = 0; b.phaseHp = 0;
+  a.update(); b.update();
+  assert(a.phaseIndex === b.phaseIndex && a.phaseBroken === b.phaseBroken, 'both fights break on the same frame');
+  const snapParts = g => g.breakParticles.map(p =>
+    [p.x.toFixed(3), p.y.toFixed(3), p.vx.toFixed(3), p.vy.toFixed(3), p.life, p.color].join('|')).join(';');
+  assert(a.breakParticles.length > 0 && snapParts(a) === snapParts(b), 'break sparkles are deterministic');
+  for (let i = 0; i < 300; i++) { a.update(); b.update(); }
+  const snap = g => g.bullets.map(x =>
+    [x.x.toFixed(3), x.y.toFixed(3), x.vx.toFixed(3), x.vy.toFixed(3), x.color].join('|')).join(';');
+  assert(snap(a) === snap(b), 'post-break bullet fields stay in lockstep (FX consumes no seeded RNG)');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+section('Graze feedback (visual only)');
+{
+  // A graze (bullet/beam passing just outside the hitbox) was worth score +
+  // bomb gauge but invisible. Each graze now spawns a small expanding ring at
+  // the graze point. The position comes from game state (ship + graze source),
+  // so no seeded RNG is consumed; the spectator mirror never runs local
+  // collisions, so rings stay local (like screen shake) and can't desync.
+  const e = mkEngine();
+  e.player.bombs = 0;
+  e.player.x = 240; e.player.y = 400;
+  // Default hitbox 6 → radius 3; bullet r 4 → graze band (7, 17). A
+  // stationary bullet at distance 12 sits mid-band.
+  e.bullets = [makeBullet(252, 400, 0, 0)];
+  e._checkCollisions();
+  assert(e.graze === 1, 'graze counted');
+  assert(e.player.lives === 99, 'graze does not hit');
+  assert(e.grazeFx.length === 1, 'graze spawns a ring');
+  const g = e.grazeFx[0];
+  // Ring sits at the graze point: hb + r + 5 = 12 px from the ship.
+  assert(Math.abs(g.x - 252) < 0.01 && Math.abs(g.y - 400) < 0.01,
+    'ring at graze point (' + g.x.toFixed(1) + ',' + g.y.toFixed(1) + ')');
+  // ~12 frames of life, then culled.
+  for (let i = 0; i < 12; i++) e.update();
+  assert(e.grazeFx.length === 0, 'ring decays away after ~12 frames');
+
+  // Beam graze: ring at the point of the beam nearest the ship.
+  const b = mkEngine();
+  b.player.bombs = 0;
+  b.phases[0].beams = [{ xn: 0.5, width: 56, color: '#fff3b0', coreColor: '#fff' }];
+  b.player.x = 240 + 36; b.player.y = 400; // graze band: halfW 28 + hb 3 < d < +10
+  b._updateBeams();
+  assert(b.graze === 1, 'beam graze counted');
+  assert(b.player.lives === 99, 'beam graze does not hit');
+  assert(b.grazeFx.length === 1, 'beam graze spawns a ring');
+  // Closest point on the vertical ray at x=240 to the ship at (276, 400):
+  // (240, 400).
+  assert(Math.abs(b.grazeFx[0].x - 240) < 0.01 && Math.abs(b.grazeFx[0].y - 400) < 0.01,
+    'beam ring at closest point on the beam');
+
+  // Cap: a dense field stays cheap — oldest rings drop first.
+  const c = mkEngine();
+  for (let i = 0; i < 50; i++) c._addGrazeFx(i, i);
+  assert(c.grazeFx.length === 40, 'graze rings capped at 40');
+  assert(c.grazeFx[0].x === 10, 'oldest ring dropped first');
+
+  // start() clears leftover rings (no FX bleeding into the next fight).
+  c._addGrazeFx(1, 1);
+  c.start([{ name: 't', duration: 9999, hp: 10000, emits: [] }],
+    { x: 240, y: 90, move: 'still' }, CONFIG.DANMAKU_STATS.p, 'p', 'reimu');
+  assert(c.grazeFx.length === 0, 'start() clears graze rings');
+
+  // Determinism: two identical fights graze identically, and the rings
+  // consume no seeded RNG (post-graze bullet fields stay in lockstep).
+  const mk = () => {
+    const g = mkEngine();
+    g.player.bombs = 0;
+    g.player.x = 240; g.player.y = 400;
+    g.bullets = [makeBullet(252, 400, 0, 0)];
+    return g;
+  };
+  const a = mk(), d = mk();
+  a.update(); d.update();
+  const snapFx = g => g.grazeFx.map(x =>
+    [x.x.toFixed(3), x.y.toFixed(3), x.t.toFixed(4)].join('|')).join(';');
+  assert(a.graze === 1 && d.graze === 1 && snapFx(a) === snapFx(d),
+    'graze rings are deterministic');
+  for (let i = 0; i < 300; i++) { a.update(); d.update(); }
+  const snap = g => g.bullets.map(x =>
+    [x.x.toFixed(3), x.y.toFixed(3), x.vx.toFixed(3), x.vy.toFixed(3), x.color].join('|')).join(';');
+  assert(snap(a) === snap(d), 'post-graze bullet fields stay in lockstep (FX consumes no seeded RNG)');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

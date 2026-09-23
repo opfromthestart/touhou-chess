@@ -154,6 +154,16 @@
         tone(ctx, { freq: 2217.46, dur: 0.3, type: 'sine', vol: 0.04, when: 0.09 });
         break;
 
+      case 'break':
+        // Spell-card BREAK (gauge destroyed by damage): a bright glassy
+        // shatter + ascending sparkle notes. Distinct from 'spell' (card start)
+        // — this is the reward for aggressive play.
+        noiseBurst(ctx, { dur: 0.3, vol: 0.2, filterFreq: 4200, filterEnd: 1600, type: 'highpass' });
+        tone(ctx, { freq: 1567.98, slideTo: 3135.96, dur: 0.35, type: 'sine', vol: 0.12 });
+        [2093, 2637, 3135.96].forEach((f, i) =>
+          tone(ctx, { freq: f, dur: 0.26, type: 'triangle', vol: 0.07, when: 0.05 + i * 0.05 }));
+        break;
+
       case 'join':
         // "Ding-dong" doorbell: the guest joined the host's room. Two bright
         // descending bell notes with a soft octave shimmer.

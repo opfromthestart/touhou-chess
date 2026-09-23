@@ -134,24 +134,53 @@ const CONFIG = {
   PHASE_SECONDS: 18,
 
   // Survival priors: P(you win the fight) per boss, per difficulty.
-  // Adapted at runtime from actual fight results. Seeds were lowered after
-  // the firepower nerfs: bullet exposure (and death risk) is far higher
-  // than in the original build.
+  // Adapted at runtime from actual fight results (see ai.js adaptSurvival,
+  // which blends these seeds 50/50 with observed outcomes).
+  //
+  // These seeds are MEASURED, not hand-tuned: they are the per-boss win rates
+  // from the headless fairness simulator (tests/tmp-danmaku-sim.js), 10 trials
+  // x 6 piece types per boss, after the per-boss `tune` calibration (bosses.js).
+  // The sim bot is a strong dodger, so treat these as an upper bound on a
+  // casual human's win rate; runtime adaptation corrects for the gap.
+  // Re-measure and update here whenever a card's difficulty changes meaningfully
+  // (docs/danmaku-engine.md rule 8). Difficulty ladder (Normal): Kaguya/Yukari
+  // hardest -> Rumia/Hina/Nitori easiest; Alice is the gentlest (easiest).
   SURVIVAL_PRIORS: {
-    // Rumia's EoSD-faithful cards are compressed to the ~25s house window
-    // (3 cards Normal / 4 Lunatic => ~75-100s of bullet exposure), but her
-    // patterns are the densest in the game — seeded slightly below
-    // Nitori/Hina, who have similar total exposure with simpler patterns.
-    rumia: { normal: 0.60, lunatic: 0.18 },
-    nitori: { normal: 0.65, lunatic: 0.22 },
-    hina: { normal: 0.65, lunatic: 0.22 },
-    patchouli: { normal: 0.60, lunatic: 0.20 },
-    alice: { normal: 0.60, lunatic: 0.20 },
-    remilia: { normal: 0.45, lunatic: 0.15 },
-    yuyuko: { normal: 0.45, lunatic: 0.15 },
-    yukari: { normal: 0.30, lunatic: 0.10 },
-    kaguya: { normal: 0.18, lunatic: 0.07 },
+    rumia:     { normal: 0.78, lunatic: 0.08 },
+    nitori:    { normal: 0.78, lunatic: 0.13 },
+    hina:      { normal: 0.82, lunatic: 0.10 },
+    patchouli: { normal: 0.77, lunatic: 0.15 },
+    alice:     { normal: 1.00, lunatic: 0.22 },
+    remilia:   { normal: 0.63, lunatic: 0.22 },
+    yuyuko:    { normal: 0.78, lunatic: 0.15 },
+    yukari:    { normal: 0.68, lunatic: 0.18 },
+    kaguya:    { normal: 0.62, lunatic: 0.15 },
   },
+
+  // AI king-danger penalties (see ai.js kingDangerScore). This game has no
+  // check rule, so the search gets no "check" signal; king danger is modeled
+  // directly. A "doomed" king (attacked, no safe escape, no answer) is a
+  // near-win, so it is worth a lot — but NOT so much that the AI becomes a
+  // pure king-hunter that ignores development. (The old hardcoded value was
+  // 100000, which made the AI a relentless king-rusher.)
+  //
+  // Tuned with tests/tmp-selfplay.js (AI vs AI self-play, `--ai-white`):
+  //   - doomed=400, dev=0.4  -> ~50% AI wins, avg ~60-70 plies (balanced,
+  //     enough captures for a healthy number of danmaku fights).
+  //   - doomed=100000, dev=0 -> AI wins ~70%, avg ~100 plies (too aggressive,
+  //     games drag).
+  // The AI is still challenging vs a casual human (it wins most games) but
+  // beatable by a strong player (self-play is ~50/50). Use AI_STRENGTHS to
+  // adjust the search depth for easier/harder play.
+  AI_KING_PENALTIES: {
+    attacked: 3,   // king attacked but answerable (safe escape or can take attacker)
+    doomed: 400,   // king attacked with no escape and no answer
+  },
+
+  // AI development incentive (see ai.js positionalBonus). Rewards pieces that
+  // have moved off the back rank, so the AI develops before launching a king
+  // attack. Keeps games balanced and the AI's play more reasonable.
+  AI_DEV_BONUS: 0.4,
 
   // AI search depth (default strength).
   AI_DEPTH: 3,

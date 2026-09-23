@@ -17,6 +17,9 @@
   // Fight stats for the game-over summary.
   let fightsWon = 0;
   let fightsLost = 0;
+  // Per-fight summaries (DanmakuEngine.getSummary) for the end-of-game
+  // "Danmaku record": total score / graze / cards broken / time / best fight.
+  const fightSummaries = [];
   // Undo: one snapshot per player move (covers the move, any fight, and the
   // AI's reply), so "Undo" always rewinds to your own last decision point.
   const undoStack = [];
@@ -49,6 +52,7 @@
       captured: captured.slice(),
       fightsWon,
       fightsLost,
+      fightSummaries: fightSummaries.slice(),
       logCounter,
       logLen: typeof GameLog !== 'undefined' ? GameLog.length : 0,
     };
@@ -70,6 +74,8 @@
     for (const c of snap.captured) captured.push(c);
     fightsWon = snap.fightsWon;
     fightsLost = snap.fightsLost;
+    fightSummaries.length = 0;
+    for (const s of (snap.fightSummaries || [])) fightSummaries.push(s);
     if (typeof GameLog !== 'undefined') GameLog.truncate(snap.logLen);
   }
 
@@ -202,6 +208,14 @@
       const playerWon = result === 'win';
       // Track the fight outcome for the game-over summary.
       if (playerWon) fightsWon++; else fightsLost++;
+      // Record how the fight went (score/graze/time/cards broken) for the
+      // end-of-game "Danmaku record". Tag it with the boss so the report can
+      // break the record down per youkai.
+      if (fight.engine && typeof fight.engine.getSummary === 'function') {
+        const s = fight.engine.getSummary();
+        s.bossId = bossId;
+        fightSummaries.push(s);
+      }
       // Adapt the AI's survival model from the actual outcome.
       adaptSurvival(bossId, difficulty, playerWon);
       // Record the outcome + resolution on the in-progress turn.
@@ -308,6 +322,57 @@
       (totalFights > 0
         ? `<div class="stat"><span>Fight record</span><b>${Math.round((fightsWon / totalFights) * 100)}%</b></div>`
         : '');
+    // "Danmaku record": how the match went in the boss fights themselves
+    // (aggregated from each fight's getSummary). Hidden if no fights happened.
+    const danmakuEl = document.getElementById('game-over-danmaku');
+    if (danmakuEl) {
+      const agg = typeof aggregateFights !== 'undefined'
+        ? aggregateFights(fightSummaries)
+        : { fights: fightSummaries.length, score: 0, graze: 0, cardsBroken: 0, time: 0, bestScore: 0 };
+      const fmtTime = typeof formatFightTime !== 'undefined'
+        ? formatFightTime
+        : (t) => Math.floor(t) + 's';
+      if (agg.fights > 0) {
+        danmakuEl.innerHTML =
+          '<div class="danmaku-record-title">Danmaku record</div>' +
+          `<div class="stat"><span>Score</span><b>${agg.score.toLocaleString()}</b></div>` +
+          `<div class="stat"><span>Graze</span><b>${agg.graze}</b></div>` +
+          `<div class="stat"><span>Cards broken</span><b>${agg.cardsBroken}</b></div>` +
+          `<div class="stat"><span>Fight time</span><b>${fmtTime(agg.time)}</b></div>` +
+          `<div class="stat"><span>Best fight</span><b>${agg.bestScore.toLocaleString()}</b></div>`;
+        danmakuEl.classList.remove('hidden');
+      } else {
+        danmakuEl.innerHTML = '';
+        danmakuEl.classList.add('hidden');
+      }
+    }
+    // "By boss": a per-youkai breakdown of the danmaku record — how many times
+    // you faced each boss, your W-L, score, and cards broken. Hidden if no
+    // fights happened (groupFightsByBoss returns [] for an empty log).
+    const bossesEl = document.getElementById('game-over-bosses');
+    if (bossesEl) {
+      const byBoss = typeof groupFightsByBoss !== 'undefined'
+        ? groupFightsByBoss(fightSummaries)
+        : [];
+      if (byBoss.length > 0) {
+        const rows = byBoss.map((b) => {
+          const name =
+            (typeof CONFIG !== 'undefined' && CONFIG.CHARACTERS &&
+             CONFIG.CHARACTERS[b.bossId]) || b.bossId;
+          return '<div class="boss-row">' +
+            `<span class="boss-name">${name}</span>` +
+            `<span class="boss-wl">${b.wins}W-${b.losses}L</span>` +
+            `<span class="boss-score">${b.score.toLocaleString()}</span>` +
+            `<span class="boss-cards">${b.cardsBroken} card${b.cardsBroken === 1 ? '' : 's'}</span>` +
+            '</div>';
+        }).join('');
+        bossesEl.innerHTML = '<div class="boss-record-title">By boss</div>' + rows;
+        bossesEl.classList.remove('hidden');
+      } else {
+        bossesEl.innerHTML = '';
+        bossesEl.classList.add('hidden');
+      }
+    }
     modal.classList.remove('hidden');
   }
 
@@ -528,6 +593,34 @@
     });
   }
 
+  // ---- Replay viewer: watch this game back, or load an exported log.
+  // The viewer keeps its own Board + BoardUI inside the modal, so it never
+  // touches the live game (opening it mid-fight is safe: the log just ends
+  // at the last resolved turn).
+  let replay = null;
+  if (typeof ReplayViewer !== 'undefined' && ReplayViewer) {
+    const replayModal = document.getElementById('replay-modal');
+    const replayBoardEl = document.getElementById('replay-board');
+    if (replayModal && replayBoardEl) {
+      replay = new ReplayViewer(replayModal, replayBoardEl);
+      replay.onClose = refreshTurnIndicator;
+      // A snapshot (slice): the live game keeps running while the replay is
+      // open, and a new game clears the log — neither should mutate the
+      // replay mid-playback.
+      const snapshot = () =>
+        (typeof GameLog !== 'undefined' ? GameLog.events : []).slice();
+      const btnReplay = document.getElementById('btn-replay');
+      if (btnReplay) btnReplay.addEventListener('click', () => {
+        replay.open(snapshot());
+      });
+      const btnGoReplay = document.getElementById('btn-game-over-replay');
+      if (btnGoReplay) btnGoReplay.addEventListener('click', () => {
+        document.getElementById('game-over-modal').classList.add('hidden');
+        replay.open(snapshot());
+      });
+    }
+  }
+
   // Debug/test hook: exposes the live game state so test pages (see
   // test-fight-resolution.html) and the browser console can inspect or drive
   // the game.
@@ -535,10 +628,12 @@
     window.__TC = {
       board,
       get captured() { return captured; },
+      get fightSummaries() { return fightSummaries; },
       ui,
       fight,
       undo,
       practice, // null on pages without the practice module
+      replay,   // null on pages without the replay module
     };
   }
 

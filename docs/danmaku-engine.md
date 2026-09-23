@@ -68,11 +68,29 @@ The player ship starts bottom-center (240, 580); the boss defaults to top-center
    on *any* hit, not just the lethal one. Losing all lives = lose.
 5. **Graze** (a bullet passing through the 10 px band just outside its collision envelope with
    the ship) scores points and fills the bomb gauge (+0.02 per graze). A full gauge earns one
-   extra bomb and resets to empty — the gauge is a reward, not a gate.
+   extra bomb and resets to empty — the gauge is a reward, not a gate. Each graze also spawns a
+   small expanding ring at the graze point (`grazeFx`, ~12 frames, capped at 40) so close dodges
+   read as intentional; the HUD graze counter flashes in the UI. The ring position comes from
+   game state (ship + graze source), so it consumes no seeded RNG, and the spectator mirror never
+   runs local collisions, so rings stay local (like screen shake) and can't desync.
 6. **Bullets despawn when they leave the screen or the card ends** — not on a timer (Touhou
    convention). Do not use `life` to kill bullets mid-screen; it exists for special cases only
    (§4.2): laser segments, homing/stationary bullets that never reach the screen edge, and
    `fadeOut` camouflage.
+
+ 7. **Breaking a card by damage is a payoff.** When a card ends because its HP gauge was broken
+    (not by timeout), the remaining bullets dissolve into drifting sparkles, the screen flashes,
+    a "Spell Card Break!" banner shows, and the `break` jingle plays (`_spawnBreakFx()`). This is
+    **purely visual/audio — there is no mechanical reward**, so it cannot shift win rates.
+
+**Per-card stats & the fight summary.** Every fight records per-spell-card stats in
+`engine.phaseStats` (px moved, time-averaged distance to the closest bullet, and `broken` —
+true when the card ended by HP break, false when it timed out). `engine.getSummary()` is a
+read-only snapshot of the finished/in-progress fight (`result`, `score`, `graze`, `lives`,
+`startLives`, `time`, `cardsBroken`) used by the result screen: Practice Mode shows the
+per-card table, a regular board fight shows a condensed "Fight summary" (score, lives left,
+graze, time, cards broken). Both are purely presentational — they consume no seeded RNG and
+never mutate state, so they can't shift win rates or desync mirrors.
 
 Player stats (lives, bombs, hitbox size) come from `CONFIG.DANMAKU_STATS[pieceType]` — a pawn
 fight gives 1 life / 1 bomb / a big 10 px hitbox; a king gives 3/3/6. Your pattern must be
@@ -100,6 +118,10 @@ multiplayer "spectate both screens" feature fair. Consequences for your PR:
   they differ only through the `speedMul`/`densityMul` scaling in `getPhases()`.
 - You can verify determinism yourself: run two identical fights headlessly and compare bullet
   snapshots (see §7).
+- **Cosmetic effects must not draw from the seeded stream either.** The spell-card-break payoff
+  (§2.7) spawns sparkles whose velocities come from each bullet's own motion plus an index-derived
+  spread — never `this._rnd`. Any visual you add to `update()`/`render()` must follow the same rule,
+  or mirrors and replays will drift.
 
 **Seeded jitter fields** (any emitter may set these; Taisei `rng_dir`/`rng_range` equivalents):
 
@@ -115,7 +137,7 @@ In multiplayer each client runs **two** engines: its own controllable fight and 
 copy* of the opponent's fight. The spectator copy is **not** a re-simulation from relayed
 input — it is a **mirror** of the opponent's authoritative state (`spectatorMirror = true`).
 The owner relays a ship snapshot
-(`x/y/lives/bombs/invuln/focus/alive/phaseIndex/phaseTime/phaseHp/bombSeq/result`)
+(`x/y/lives/bombs/invuln/focus/alive/phaseIndex/phaseTime/phaseHp/phaseBroken/bombSeq/result`)
 piggybacked on the existing 33 ms `input` tick; the spectator engine applies it in
 `applyMirrorState()`:
 
@@ -124,7 +146,9 @@ piggybacked on the existing 33 ms `input` tick; the spectator engine applies it 
   delayed position the field renders at.
 - **Lives/bombs/invuln/focus/phase** are applied immediately. A phase transition reuses
   `_finalizePhase`/`_startPhase`, so both fights consume the seeded RNG in lockstep and the
-  ghost's bullet field stays aligned with the real one.
+  ghost's bullet field stays aligned with the real one. If the real card was destroyed by damage
+  (`phaseBroken`), the mirror replays the same break FX (flash + sparkles + `break` jingle) from
+  its own local bullet field.
 - The mirror engine **never** runs local damage, collision, deathbomb, or bomb-gauge logic and
   **never ends the fight on its own** — the authoritative `fight-result` message drives
   resolution. (The old input-only re-simulation desynced: every emitter aims at the *local*
@@ -370,6 +394,31 @@ densityMul: (em.densityMul || 1) * CONFIG.DIFFICULTY[diff].density  // normal 1.
 So **write your pattern at Normal values**; Lunatic automatically gets ~20% faster and ~35%
 denser. If you want a Lunatic-only card, just don't put it in `phases.normal`.
 
+**Per-boss balance tuning (`tune`).** Each boss may declare a `tune` object with a
+sub-object per difficulty (`normal` / `lunatic`), each holding multipliers applied on top
+of the default scaling:
+
+```js
+tune: {
+  normal:  { durationMul: 0.75, densityMul: 0.75 },  // ease Normal
+  lunatic: { durationMul: 1.0,  densityMul: 1.2 },   // harden Lunatic
+}
+```
+
+- `durationMul` — scale every phase's duration (shorter = less bullet exposure = easier).
+  This is the main lever for low-DPS pieces, who endure the full card duration instead of
+  breaking it early (see rule 4).
+- `densityMul` — scale every emit's bullet count relative to the default for that
+  difficulty (`1.0` = default; `<1` sparser/easier, `>1` denser/harder). Composes with the
+  global Lunatic density scale.
+- `hpMul` — scale every phase's HP gauge (lower = stronger pieces break the card faster).
+
+The two difficulties are tuned **independently**, so Lunatic stays harder than Normal even
+when Normal is eased. These are the balance knobs used to hit the per-boss win-rate targets
+(Normal ≈ 75%, Lunatic < 25% — see §6); the authored pattern data stays EoSD-faithful.
+Measure win rates with the headless simulator (`tmp-danmaku-sim.js`) before and after any
+change, and update `CONFIG.SURVIVAL_PRIORS` when a change is meaningful (rule 8).
+
 ### 5.4 Boss movement
 
 The boss object (top level of each `BOSSES` entry) controls where the emitters originate:
@@ -492,6 +541,25 @@ const snap = e => e.bullets.map(x => [x.x.toFixed(3), x.y.toFixed(3), x.vx.toFix
 - Open `test-practice.html` — Practice Mode tests.
 - Open `index.html` → **Practice Mode** — actually *play* your card. This is the real review:
   can a human read the pattern? Is there a fair dodge? Does it fit the character's theme?
+
+### 7.5 Fairness / win-rate check (required for balance changes)
+
+`tests/tmp-danmaku-sim.js` plays every boss fight headlessly with a competent safety-map bot
+(a "strong human" proxy) and reports win rates per boss / difficulty / piece. This is the
+measurement tool behind rule 8 (update `CONFIG.SURVIVAL_PRIORS`) and the per-boss `tune`
+calibration in `bosses.js`:
+
+```sh
+node tests/tmp-danmaku-sim.js                      # full sweep: 9 bosses x 2 diffs x 6 pieces x 10 trials (~11 min)
+node tests/tmp-danmaku-sim.js kaguya lunatic --trials 20   # one boss+difficulty, all pieces (fast)
+```
+
+Targets (see §6): **Normal ≈ 75% player win, Lunatic < 25%**, with the difficulty ladder
+Kaguya/Yukari (hardest) → Rumia/Hina/Nitori (easiest), Alice the gentlest. The bot is a strong
+dodger, so treat its win rates as an upper bound on a casual human's; the seeds in
+`CONFIG.SURVIVAL_PRIORS` are the measured per-boss rates from this tool. Re-run after any
+`durationMul`/`densityMul`/`hpMul` change or new/changed card, and keep the two difficulties
+independently tuned (Lunatic must stay harder than Normal).
 
 ---
 

@@ -40,6 +40,105 @@ function resetSurvival() {
   for (const k in survivalState) delete survivalState[k];
 }
 
+// King-danger terms for the static evaluation.
+//
+// This game has no check rule: a king may legally sit on an attacked square,
+// so the search gets no "check" signal to react to. The only way a doomed
+// king shows up in the search is when the actual capture move is inside the
+// horizon — a threat two moves away (e.g. "the queen sneaks to h5 and traps
+// the king") is invisible at depth 3. Model king danger directly:
+//   - King attacked but answerable (safe escape square, or a friendly piece
+//     can capture an attacker): moderate penalty — the side must spend a
+//     tempo responding.
+//   - King attacked with no safe escape and no way to take the attacker:
+//     the king is doomed within a move; heavy penalty. It stays below
+//     INFINITY so a real game-over loss still ranks worse (and a delayed
+//     doom ranks worse than a saved king).
+//
+// Both penalties are tunable via CONFIG.AI_KING_PENALTIES (see config.js).
+// They are read at call time (not module load) so tests can override them.
+function kingAttackPenalty() { return CONFIG.AI_KING_PENALTIES.attacked; }
+function kingDoomedPenalty() { return CONFIG.AI_KING_PENALTIES.doomed; }
+
+function findKing(board, color) {
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = board.grid[r][c];
+      if (p && p.type === 'k' && p.color === color) return { row: r, col: c };
+    }
+  }
+  return null;
+}
+
+// Is (r,c) attacked by any `byColor` piece other than the one at (skipR,skipC)?
+// (Used for escape squares the king would capture the attacker on: the
+// captured piece no longer guards its own square.)
+function attackedExcept(board, r, c, byColor, skipR, skipC) {
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      if (row === skipR && col === skipC) continue;
+      const p = board.grid[row][col];
+      if (!p || p.color !== byColor) continue;
+      if (board.attacksSquare(row, col, r, c)) return true;
+    }
+  }
+  return false;
+}
+
+// Score from black's perspective: negative when the black king is in danger,
+// positive when the white king is.
+function kingDangerScore(board) {
+  const attackedPenalty = kingAttackPenalty();
+  const doomedPenalty = kingDoomedPenalty();
+  let score = 0;
+  for (const color of ['white', 'black']) {
+    const enemy = color === 'white' ? 'black' : 'white';
+    const king = findKing(board, color);
+    if (!king) continue; // captured; gameOver is handled by the search
+    if (!board.squareAttacked(king.row, king.col, enemy)) continue;
+    // 1. Safe escape: an adjacent square the king can move to (empty, or an
+    //    enemy piece it could capture) that no other enemy piece attacks.
+    let hasEscape = false;
+    for (let dr = -1; dr <= 1 && !hasEscape; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const ar = king.row + dr, ac = king.col + dc;
+        if (!board.inBounds(ar, ac)) continue;
+        const occ = board.grid[ar][ac];
+        if (occ && occ.color === color) continue; // own piece blocks
+        const safe = occ
+          ? !attackedExcept(board, ar, ac, enemy, ar, ac)
+          : !board.squareAttacked(ar, ac, enemy);
+        if (safe) { hasEscape = true; break; }
+      }
+    }
+    if (hasEscape) {
+      score += color === 'black' ? -attackedPenalty : attackedPenalty;
+      continue;
+    }
+    // 2. Answerable: some friendly piece (other than the king, whose captures
+    //    are covered by the escape check above) can take one of the attackers.
+    let answerable = false;
+    for (let r = 0; r < 8 && !answerable; r++) {
+      for (let c = 0; c < 8 && !answerable; c++) {
+        const p = board.grid[r][c];
+        if (!p || p.color !== enemy) continue;
+        if (!board.attacksSquare(r, c, king.row, king.col)) continue;
+        for (let r2 = 0; r2 < 8 && !answerable; r2++) {
+          for (let c2 = 0; c2 < 8 && !answerable; c2++) {
+            const d = board.grid[r2][c2];
+            if (d && d.color === color && d.type !== 'k' &&
+                board.attacksSquare(r2, c2, r, c)) answerable = true;
+          }
+        }
+      }
+    }
+    const penalty = answerable ? attackedPenalty : doomedPenalty;
+    score += color === 'black' ? -penalty : penalty;
+  }
+  return score;
+}
+
 // Static evaluation from the AI's (black's) perspective.
 // Positive = good for the AI.
 function evaluate(board) {
@@ -71,6 +170,7 @@ function evaluate(board) {
     }
   }
   score += positionalBonus(board);
+  score += kingDangerScore(board);
   return score;
 }
 
@@ -97,6 +197,18 @@ function positionalBonus(board) {
         const pawnBonus = adv * 0.3;
         if (piece.color === 'black') bonus += pawnBonus;
         else bonus -= pawnBonus;
+      }
+      // Development: reward knights/bishops/rooks that have moved off the
+      // back rank. This nudges the AI to develop before launching a king
+      // attack, keeping games longer and more balanced (see config.js
+      // AI_DEV_BONUS).
+      if (piece.type === 'n' || piece.type === 'b' || piece.type === 'r') {
+        const backRank = piece.color === 'black' ? 7 : 0;
+        if (r !== backRank) {
+          const devBonus = CONFIG.AI_DEV_BONUS;
+          if (piece.color === 'black') bonus += devBonus;
+          else bonus -= devBonus;
+        }
       }
     }
   }
@@ -170,20 +282,25 @@ function pickMove(board, depthOverride) {
 
   let bestMove = moves[0];
   let bestScore = -Infinity;
-  let alpha = -INFINITY;
-  const beta = INFINITY;
   // Add a little randomness among near-equal moves to vary games.
+  // Each root move is searched with a FULL window (-INFINITY, INFINITY) so
+  // its score is EXACT. An incremental/narrow window can return a fail-low or
+  // fail-high BOUND that is not the true value; treating those bounds as exact
+  // scores let the near-best filter below randomly pick a losing move (e.g. a
+  // move that loses the king in one reply but only looks "about as good" as
+  // the true best under a narrowed window). Full windows are cheap at this
+  // depth and make the root selection correct.
   const scored = [];
   for (const move of moves) {
     const nb = board.clone();
     nb.applyMove(move);
-    const score = search(nb, depth - 1, alpha, beta) + (Math.random() - 0.5) * 0.3;
+    const raw = search(nb, depth - 1, -INFINITY, INFINITY);
+    const score = raw + (Math.random() - 0.5) * 0.3;
     scored.push({ move, score });
     if (score > bestScore) {
       bestScore = score;
       bestMove = move;
     }
-    if (bestScore > alpha) alpha = bestScore;
   }
   // Occasionally pick a near-best move for variety.
   if (scored.length > 1) {
@@ -200,8 +317,18 @@ function pickMove(board, depthOverride) {
 function pickOpeningMove(board) {
   const moves = board.getMoves('black');
   if (moves.length === 0) return null;
+  // The book is purely heuristic (no search), so never offer a move that
+  // lets the enemy capture our king in one reply — e.g. a "sensible" bishop
+  // capture that opens a queen diagonal to the king. If nothing is safe,
+  // return null and let the real search (which handles king danger) choose.
+  const safe = moves.filter(m => {
+    const nb = board.clone();
+    nb.applyMove(m);
+    return !nb.getMoves('white').some(mv => mv.captured && mv.captured.type === 'k');
+  });
+  if (safe.length === 0) return null;
   // Prefer central pawn moves and knight development.
-  const scored = moves.map(m => {
+  const scored = safe.map(m => {
     let s = 0;
     if (m.piece.type === 'p' && (m.piece.character === 'rumia')) {
       // Central pawns (d, e) preferred.
@@ -220,5 +347,6 @@ function pickOpeningMove(board) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     pickMove, evaluate, search, survivalPrior, adaptSurvival, resetSurvival,
+    kingDangerScore,
   };
 }

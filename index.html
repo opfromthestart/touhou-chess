@@ -183,6 +183,10 @@
           <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg></span>
           <span class="lbl">Multi</span>
         </button>
+        <button id="btn-replay" class="rail-btn" title="Replay: watch this game back move by move (or load an exported log)">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></span>
+          <span class="lbl">Replay</span>
+        </button>
       </div>
     </nav>
 
@@ -293,6 +297,11 @@
             you take a hit cancels that hit (a "deathbomb") — it works on any life as long as you
             still have bombs. Your firepower scales with the piece's value — a Cirno pawn fires
             weakly, a Reimu king rips through cards.</li>
+        <li><strong>Graze &amp; breaking cards:</strong> passing close to a bullet without being hit
+            is a <em>graze</em> (you'll see a small ring) — grazes earn score and fill the bomb
+            gauge, and a full gauge earns an extra bomb. Your shots also damage the current spell
+            card's HP gauge: <strong>breaking it ends the card early</strong> with a "Spell Card
+            Break!" flourish.</li>
         <li><strong>Practice Mode:</strong> the "Practice" button opens a menu to fight any boss as
             any piece on either difficulty — no board, no stakes. Great for learning a character.</li>
       </ul>
@@ -305,7 +314,45 @@
       <h2 id="game-over-title"></h2>
       <p id="game-over-sub" class="game-over-sub"></p>
       <div id="game-over-stats" class="game-over-stats"></div>
-      <button id="btn-game-over-new">Play Again</button>
+      <div id="game-over-danmaku" class="game-over-danmaku hidden"></div>
+      <div id="game-over-bosses" class="game-over-bosses hidden"></div>
+      <div class="game-over-buttons">
+        <button id="btn-game-over-new">Play Again</button>
+        <button id="btn-game-over-replay" class="secondary" title="Watch the whole game back, move by move">Watch Replay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Replay viewer: plays a recorded game log back on its own board. -->
+  <div id="replay-modal" class="modal hidden">
+    <div class="modal-content replay-content">
+      <div class="replay-header">
+        <h2>Replay</h2>
+        <button id="replay-btn-close" class="replay-close" title="Close (Esc)">✕</button>
+      </div>
+      <div id="replay-board" class="replay-board"></div>
+      <div id="replay-banner" class="replay-gameover"></div>
+      <div id="replay-fight-banner" class="replay-fight-banner hidden"></div>
+      <div id="replay-status" class="replay-status">Loading…</div>
+      <div class="replay-trays">
+        <div id="replay-tray-white" class="captured-tray" title="Pieces captured by White"></div>
+        <div id="replay-tray-black" class="captured-tray" title="Pieces captured by Black"></div>
+      </div>
+      <ul id="replay-move-log" class="replay-move-log"></ul>
+      <div class="replay-controls">
+        <button id="replay-btn-start" title="Back to the start">⏮</button>
+        <button id="replay-btn-play" title="Play / pause (Space)">▶ Play</button>
+        <button id="replay-btn-step" title="Step one move (→)">⏭</button>
+        <label class="replay-speed-label" for="replay-speed">Speed</label>
+        <select id="replay-speed" title="Playback speed">
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+        </select>
+        <span id="replay-progress" class="replay-progress"></span>
+        <label class="replay-load-btn" for="replay-file-input" title="Load an exported .json game log">Load log…</label>
+        <input id="replay-file-input" type="file" accept=".json,application/json" class="hidden" />
+      </div>
     </div>
   </div>
 
@@ -416,6 +463,8 @@
   <script src="js/ui/practice-ui.js"></script>
   <script src="js/debug/log.js"></script>
   <script src="js/debug/replay.js"></script>
+  <script src="js/ui/replay-ui.js"></script>
+  <script src="js/ui/match-stats.js"></script>
   <script src="js/main.js"></script>
   <!-- Multiplayer: PeerJS (vendored) + thin wrapper + PVP controller. -->
   <script src="js/net/telemetry.js"></script>
